@@ -12,7 +12,7 @@ import re
 #A time point is 1/192 of a measure (1/48 of a beat)
 #Every line is an integer representing the number of time points after the start*
 #  *start = music start plus offset (in chart_data.dat)
-#Then three ints which must be 0 or 1 representing (individual note, start of held note, end of held note)
+#Then three ints representing (individual note, start of held note, end of held note)
 # lines of "000" are always omitted
 #each value separated by a space
 
@@ -43,46 +43,52 @@ def main():
                     (difficulty, position) = tmp.strip().split("@")
                     difficulty = difficulty.strip(":")
                     chart.seek(int(position))
-                    this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+".mnd")
+                    this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+"_"+position+".mnd")
                     #print(this_difficulty_file)
+                    success = False
                     with open(this_difficulty_file, mode="w", encoding="utf-8") as mnd:
                         mnd.write(music_path+"\n")
                         mnd.write(bpm+"\n")
                         mnd.write(offset+"\n")
-                        write_mnd_data(chart, mnd)
+                        success = write_mnd_data(chart, mnd)
+                    if not success:
+                        os.remove(this_difficulty_file)
 
-
-def bl(value):#returns 0 or 1 based on true/false input plus a prefixed space
-    return " 1" if value else " 0"
 
 def write_mnd_data(chart, mnd):
     #assumes chart has already been seek()ed to the right position (first line of note data)
     #assumes mnd has had header lines written
+    #returns if it was successful
     time_point = 0
     stored_lines = []
     while True:
-        line = chart.readline().strip()
+        line = chart.readline()
+        if len(line) == 0:
+            print("Unexpected EoF!")
+            return False
+        line = line.strip()
         if ";" in line or "," in line:
             #process a measure
             count = len(stored_lines)
             if not count in [4, 8, 12, 16, 24, 32, 48, 64, 96, 192]:
                 print("bad count("+str(count)+") at "+str(chart.tell()))
-                break
-            time_resolution = 192/count
+                return False
+            time_resolution = 192//count #integer division
             for notes in stored_lines:
-                note = "1" in notes or "M" in notes
-                #Counting mines (M) as notes.
-                start_long = "2" in notes or "4" in notes
-                #Counting rolls (4) as long notes- probably not a good idea
-                end_long = "3" in notes
+                note = notes.count("1")
+                #Does nothing with mines, maybe make them notes? ("M")
+                start_long = notes.count("2")+notes.count("4")
+                #Counting rolls (4) as long notes
+                end_long = notes.count("3")
                 if (note or start_long or end_long):
-                    mnd.write(str(time_point)+bl(note)+bl(start_long)+bl(end_long)+"\n")
+                    mnd.write(str(time_point))
+                    mnd.write(" "+str(note)+" "+str(start_long)+" "+str(end_long)+"\n")
                 time_point += time_resolution
             stored_lines = []
         else:
             if len(line) == 4:
                 stored_lines.append(line)
         if ";" in line:
-            break
+            return True
 
 main()
