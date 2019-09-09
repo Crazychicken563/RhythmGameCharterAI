@@ -71,7 +71,7 @@ def write_mnd_data(chart, mnd):
             #process a measure
             count = len(stored_lines)
             if not count in [4, 8, 12, 16, 24, 32, 48, 64, 96, 192]:
-                print("bad count("+str(count)+") at "+str(chart.tell()))
+                print(f"bad count({count}) at {chart.tell()}")
                 return False
             time_resolution = 192//count #integer division
             for notes in stored_lines:
@@ -81,8 +81,7 @@ def write_mnd_data(chart, mnd):
                 #Counting rolls (4) as long notes
                 end_long = notes.count("3")
                 if (note or start_long or end_long):
-                    mnd.write(str(time_point))
-                    mnd.write(" "+str(note)+" "+str(start_long)+" "+str(end_long)+"\n")
+                    mnd.write(f"{time_point} {note} {start_long} {end_long}\n")
                 time_point += time_resolution
             stored_lines = []
         else:

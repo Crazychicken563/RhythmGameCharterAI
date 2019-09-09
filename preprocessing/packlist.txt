@@ -1,8 +1,8 @@
 The following is a list of all packs that I currently have
 Some have been excluded from the analysis (see excludes array in ddr_finder)
-There are 1853 songs which fit the no BPM/stops requirement
-for total of 8541 charts (difficulties)
-(2 charts in "In The Groove 3" don't actually exist, first script reports 8543)
+There are 1790 songs which fit the no BPM/stops requirement
+for total of 8223 charts (difficulties)
+(2 charts in "In The Groove 3" don't actually exist, first script reports 8223)
 
 ['3guys1pack',
  'Aikatsu! Pad Pack 01',
