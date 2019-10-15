@@ -1,7 +1,7 @@
 import os
 import re
 
-source_dir = "../clone_hero_data/clonehero-win64/songs"
+source_dir = "clone_hero_data/clonehero-win64/songs"
 def main():
     for (dirpath, dirnames, filenames) in os.walk(source_dir):
         name = os.path.relpath(dirpath, source_dir)
@@ -17,29 +17,35 @@ def main():
         else:
             print("Parsing " + name)
         with open(os.path.join(dirpath, "notes.chart"), encoding="utf-8") as notes:
-            currLine = notes.readline()
-            
-            (a, chart_path) = notes.readline().strip().split("=")
-            (b, music_path) = notes.readline().strip().split("=")
-            (c, bpm)        = notes.readline().strip().split("=")
-            (d, offset)     = notes.readline().strip().split("=")
-            assert (a, b, c, d) == ("CHART", "MUSIC", "BPM", "OFFSET")
-            with open(chart_path, encoding="latin-1") as chart:
-                while True:
-                    tmp = chart_data.readline()
-                    if len(tmp) < 3:
-                        break
-                    (difficulty, position) = tmp.strip().split("@")
-                    difficulty = difficulty.strip(":")
-                    chart.seek(int(position))
-                    this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+"_"+position+".mnd")
-                    #print(this_difficulty_file)
-                    success = False
-                    with open(this_difficulty_file, mode="w", encoding="utf-8") as mnd:
-                        mnd.write(music_path+"\n")
-                        mnd.write(bpm+"\n")
-                        mnd.write(offset+"\n")
-                    if not success:
-                        os.remove(this_difficulty_file)
+            scanningHeader = False
+            currLine = notes.readline().strip()
+            while currLine:
+                if scanningHeader:
+                    if currLine == "}":
+                        scanningHeader = False
+                        print("end of header")
+                    else:
+                        (timestamp, data) = currLine.split("=")
+                        timestamp = timestamp.strip()
+                        datums = data.strip().split(" ")
+                        if datums[0] == "N":
+                            #These are the only things we care about for now
+                            augment = int(datums[1].strip())
+                            duration = datums[2].strip()
+                            if augment <= 4:
+                                endNote = str(int(timestamp) + int(duration))
+                                mnd.write(f"{timestamp} {str(augment)} {timestamp} {endNote}\n")
+                else:
+                    if any(header in currLine for header in ["[ExpertSingle]", "[HardSingle]", "[MediumSingle]", "[EasySingle]"]):
+                        print("Now scanning " + currLine)
+                        notes.readline() #Skip the "{"
+                        scanningHeader = True
+
+                        this_difficulty_file = os.path.join("clone_hero_data", currLine + "_" + name + ".mnd")
+                        print(this_difficulty_file)
+                        success = False
+                        mnd = open(this_difficulty_file, mode="w", encoding="utf-8")
+                
+                currLine = notes.readline().strip()
 
 main()
