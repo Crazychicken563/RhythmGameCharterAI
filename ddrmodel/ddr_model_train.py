@@ -20,12 +20,8 @@ import io
 #Current input is purely the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4
 #none is used only for start of song data
 #Later revision will use the actual song data as well, but that is not included in this prototype
-source_dir = "../preprocessing/ddr_data/In The Groove"
-song_count = 0
-song_path = []
-song_mnd = []
-song_output = []
-def setup_data():
+source_dir = "../preprocessing/ddr_data"
+def song_data():
     for (dirpath, dirnames, filenames) in os.walk(source_dir):
         name = os.path.relpath(dirpath, source_dir)
         if len(dirnames) > 5:
@@ -52,8 +48,7 @@ def setup_data():
                     chart.seek(int(position))
                     this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+"_"+position+".mnd")
                     if os.path.exists(this_difficulty_file):
-                        song_path.append(this_difficulty_file)
-                        assert(mnd_data(chart))
+                        yield (this_difficulty_file,mnd_data(chart))
 
 
 def mnd_data(chart):
@@ -66,15 +61,13 @@ def mnd_data(chart):
     while True:
         line = chart.readline()
         if len(line) == 0:
-            print("Unexpected EoF!")
-            return False
+            raise Exception("Unexpected EoF!")
         line = line.strip()
         if ";" in line or "," in line:
             #process a measure
             count = len(stored_lines)
             if not count in [4, 8, 12, 16, 24, 32, 48, 64, 96, 192]:
-                print(f"bad count({count}) at {chart.tell()}")
-                return False
+                raise Exception(f"bad count({count}) at {chart.tell()}")
             time_resolution = 192//count #integer division
             for notes in stored_lines:
                 note = notes.count("1")
@@ -101,17 +94,13 @@ def mnd_data(chart):
             if len(line) == 4:
                 stored_lines.append(line)
         if ";" in line:
-            song_mnd.append(mnd_data)
-            song_output.append(output)
-            return True
-
-setup_data()
+            return (mnd_data, output)
 
 LSTM_HISTORY_LENGTH = 32
 
 mnd_input = layers.Input(shape=(5,),name="mnd_input")
 x = layers.Dense(32)(mnd_input)
-hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH-1,4,),name="hist_input")
+hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,4,),name="hist_input")
 hist_lstm = layers.LSTM(32)(hist_input)
 x = layers.concatenate([x,hist_lstm])
 x = layers.Dense(32)(x)
@@ -132,23 +121,26 @@ def generate_song_inout_data(mnd_arr, out_arr):
     outputs = []
     maxouts = []
     fulldata = []
-    for i in range(LSTM_HISTORY_LENGTH-1):
+    for i in range(LSTM_HISTORY_LENGTH):
         inputs.append(np.array([0, 0, 0, 0, 0]))
         maxouts.append([0, 0, 0, 0])
         outputs.append(to_categorical([0, 0, 0, 0],4))
     for pos in range(len(mnd_arr)):
-        i = pos+LSTM_HISTORY_LENGTH-1
+        i = pos+LSTM_HISTORY_LENGTH
         inputs.append(mnd_arr[pos])
         outputs.append(out_arr[pos])
         maxouts.append(np.argmax(out_arr[pos],axis=1))
         yield ((np.array(inputs[i]), np.array(maxouts[pos:i])), np.array(outputs[i]))
 
-for i in range(100): #true epoch count AKA number of songs to process
-    print(song_path[i])
-    all_data = generate_song_inout_data(song_mnd[i], song_output[i])
+gen = song_data()
+while True: #true epoch count AKA number of songs to process
+    (name, (mnd, out)) = next(gen)
+    print(name)
+    all_data = generate_song_inout_data(mnd, out)
     (ins, outs) = zip(*all_data)
     (in_mnd, in_hist) = zip(*ins)
     (outL, outU, outD, outR) = zip(*outs)
-    model.fit(x=[in_mnd,in_hist], y=[outL, outU, outD, outR])
-
-model.save("ddr_model.h5")
+    model.fit(x=[in_mnd,in_hist], y=[outL, outU, outD, outR],epochs=8, batch_size=128)
+    print("saving model")
+    model.save("ddr_model.h5")
+    print("saving complete")
