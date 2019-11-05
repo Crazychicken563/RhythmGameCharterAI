@@ -3,6 +3,7 @@ from os import listdir
 from os.path import isfile, join, isdir
 import cv2
 import soundfile as sf
+import csv
 
 def load_songs(path):
     songs = [f for f in listdir(path) if isdir(join(path, f))]
@@ -39,9 +40,22 @@ def load_songs(path):
 if __name__ == "__main__":
     path = './CustomLevels'
     songs = load_songs(path)
-    for song in songs:
-        print(songs[song])
-        info = songs[song]
-        #with open(info['egg'], 'rb') as f:
-        data, samplerate = sf.read(info['egg'])
-        print(data, samplerate)
+    with open('songs.csv', 'w') as csvfile:
+        fieldnames = ['song', 'info', 'maps']
+        csvwriter = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        for song in songs:
+            print(songs[song])
+            info = songs[song]
+            # read the sound file
+            data, samplerate = sf.read(info['egg'])
+            #print(data, samplerate)
+            # read the choreography 
+            maps = []
+            for map in info['maps']:
+                with open(map, 'r') as f:
+                    line = f.readline()
+                    choreo = eval(line)
+                    maps.append(choreo)
+                    #for key in choreo.keys():
+                    #    print(choreo[key])
+            csvwriter.writerow({'song':song, 'info':info, 'maps':maps})
