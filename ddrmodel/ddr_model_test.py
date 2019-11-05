@@ -21,48 +21,56 @@ if len(sys.argv) > 1:
 else:
   path = "../preprocessing/ddr_data/In The Groove/Anubis/c6_5820.mnd"
 
-def sample(preds, temperature=1.0):
-    # helper function to sample an index from a probability array
-    preds = np.asarray(preds).astype('float64')
-    preds = np.log(preds) / temperature
-    exp_preds = np.exp(preds)
-    preds = exp_preds / np.sum(exp_preds)
-    probas = np.random.multinomial(1, preds, 1)
-    return np.argmax(probas)
-
-diversity = 0.5
-
+np.set_printoptions(precision=4,suppress=True)
 with open(path, mode='r', encoding="utf-8") as generic:
     songpath = generic.readline()
     bpm = generic.readline()
     offset = generic.readline()
     last_time = 0
-    history = [0, 0, 0, 0]*LSTM_HISTORY_LENGTH
-    while(line = generic.readline()):
+    history = [[0, 0, 0, 0]]*LSTM_HISTORY_LENGTH
+    while True:
+        line = generic.readline()
+        if len(line) == 0:
+            break
         line_data = line.split()
         (time_point, note, start_long, end_long) = (int(x) for x in line_data)
         for t in [48, 24, 16, 12, 8, 6, 4, 3, 2, 1]: #time_resolution of individual notes
             if time_point%t == 0:
                 beat_fract = t
                 break
-        mnd_data = [time_point-last_time, beat_fract, note, start_long, end_long]
+        mnd_in = np.array([time_point-last_time, beat_fract, note, start_long, end_long],dtype="float32",ndmin=2)
         last_time = time_point
-        model.predict([mnd_data,history[-1:-LSTM_HISTORY_LENGTH]], verbose=0)[0]
-
-for diversity in [0.5]:
-    print('----- diversity:', diversity)
-    sys.stdout.write(generated)
-
-    for i in range(400):
-        x_pred = np.zeros((1, maxlen, len(chars)))
-        for t, char in enumerate(sentence):
-            x_pred[0, t, char_indices[char]] = 1.
-
-        preds = model.predict(x_pred, verbose=0)[0]
-        next_index = sample(preds, diversity)
-        next_char = indices_char[next_index]
-
-        sentence = sentence[1:] + next_char
-
-        print(next_char, end = "")
-    print()
+        hs = len(history)
+        hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
+        probs = model.predict([mnd_in,hist_in])
+        (l,u,d,r) = (x[0].astype('float') for x in probs)
+        available = {'l':l,'u':u,'d':d,'r':r}
+        out = {'l':0,'u':0,'d':0,'r':0}
+        for _ in range(end_long):
+            best_v = 0
+            for k, v in available.items():
+                if v[3] > best_v:
+                    best_k = k
+                    best_v = v[3]
+            out[best_k] = 3
+            del available[best_k]
+        for _ in range(start_long):
+            best_v = 0
+            for k, v in available.items():
+                if v[2] > best_v:
+                    best_k = k
+                    best_v = v[2]
+            out[best_k] = 2
+            del available[best_k]
+        for _ in range(note):
+            best_v = 0
+            for k, v in available.items():
+                if v[1] > best_v:
+                    best_k = k
+                    best_v = v[1]
+            out[best_k] = 1
+            del available[best_k]
+        (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
+        print(mnd_in,[L,U,D,R])
+        print(list(x[0].astype('float') for x in probs))
+        history.append([L,U,D,R])
