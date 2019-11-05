@@ -3,3 +3,7 @@ ffmpeg.exe
 *.h5
 madmom
 __pycache__/*
+clone_hero_data
+BeatSaber/CustomLevels
+BeatSaber/.vscode
+.vscode
