@@ -4,7 +4,7 @@ import re
 #Currently banning songs with STOPS. This is definitely fixable
 #Note: source_dir is currently hardcoded, probably a bad idea
 
-source_dir = "D:\Program Files\StepMania 5\Songs"
+source_dir = r"D:\Program Files\StepMania 5\Songs"
 excludes = [
     "Konami official","Dance Dance Revolution 7th Mix -Max2-", #.dwi support needed
     "DDR X", "SPEIRMIX", "beta style", "gamma style", #Uses DDR X rating scale
@@ -12,7 +12,6 @@ excludes = [
     "StepMania 5",#has weird/custom stuff, I should probably extract the originals
 ]
 #ITG and DDR rating scales are close enough to ignore the difference
-#Check ratings for Skittles Selection 6, Vocaloid Project Pad Pack 4th
 #Note that ITG 1/2 are the only official ones. 3, Rebirth, Rebirth+, Rebirth 2 are all fan-made
 
 danceTypesFound = set()
@@ -58,10 +57,10 @@ for (dirpath, dirnames, filenames) in os.walk(source_dir):
                 if "," in line:
                     skip = "Multiple BPMs detected"
                 else:
-                    bpmregex = re.search("=(\d+\.?\d*)", line)
+                    bpmregex = re.search(r"=(\d+\.?\d*)", line)
                     BPM = bpmregex.group(1)#Note that negative BPMs can exist, but are weird
             if "#OFFSET" in line:
-                offsetregex = re.search(":(-?\d+\.?\d*)", line)
+                offsetregex = re.search(r":(-?\d+\.?\d*)", line)
                 OFFSET = offsetregex.group(1)
             if "#STOPS" in line:
                 if "=" in line:
