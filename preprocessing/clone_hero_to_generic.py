@@ -18,7 +18,11 @@ def main():
             print("Parsing " + name)
         with open(os.path.join(dirpath, "notes.chart"), encoding="utf-8") as notes:
             scanningHeader = False
-            currLine = notes.readline().strip()
+            try:
+                currLine = notes.readline().strip()
+            except UnicodeDecodeError as e:
+                print(e)
+                continue
             while currLine:
                 if scanningHeader:
                     if currLine == "}":
