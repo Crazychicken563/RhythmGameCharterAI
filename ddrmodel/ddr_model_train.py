@@ -1,3 +1,4 @@
+#current training paused at "One Bite"
 import os
 import re
 
@@ -21,8 +22,13 @@ import io
 #none is used only for start of song data
 #Later revision will use the actual song data as well, but that is not included in this prototype
 source_dir = "../preprocessing/ddr_data"
-def song_data():
+def song_data(skipto = ""):
     for (dirpath, dirnames, filenames) in os.walk(source_dir):
+        if skipto != "":
+            if skipto in dirpath:
+                skipto = ""
+            else:
+                continue
         name = os.path.relpath(dirpath, source_dir)
         if len(dirnames) > 5:
             print(">Subdirectories found in "+name+", continuing.")
@@ -48,7 +54,7 @@ def song_data():
                     chart.seek(int(position))
                     this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+"_"+position+".mnd")
                     if os.path.exists(this_difficulty_file):
-                        yield (this_difficulty_file,mnd_data(chart))
+                        yield (this_difficulty_file,float(bpm),mnd_data(chart))
 
 
 def mnd_data(chart):
@@ -96,9 +102,9 @@ def mnd_data(chart):
         if ";" in line:
             return (mnd_data, output)
 
-LSTM_HISTORY_LENGTH = 32
+LSTM_HISTORY_LENGTH = 64
 
-mnd_input = layers.Input(shape=(5,),name="mnd_input")
+mnd_input = layers.Input(shape=(6,),name="mnd_input")
 x = layers.Dense(32)(mnd_input)
 hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,4,),name="hist_input")
 hist_lstm = layers.LSTM(32)(hist_input)
@@ -110,37 +116,47 @@ outU = layers.Dense(4, activation='softmax', name = "outU")(x)
 outD = layers.Dense(4, activation='softmax', name = "outD")(x)
 outR = layers.Dense(4, activation='softmax', name = "outR")(x)
 
-optimizer = RMSprop(learning_rate=0.01)
+#optimizer = RMSprop(learning_rate=0.001)
+optimizer = keras.optimizers.Nadam()
 model = models.Model(inputs=[mnd_input,hist_input],outputs=[outL,outU,outD,outR])
 
 model.compile(loss='categorical_crossentropy', optimizer=optimizer)
 
-def generate_song_inout_data(mnd_arr, out_arr):
+skipname = ""
+if len(sys.argv) > 1:
+    if sys.argv[1] == "LOAD":
+        model = load_model("ddr_model.h5")
+    if len(sys.argv) > 2:
+        skipname = sys.argv[2]
+
+def generate_song_inout_data(mnd_arr, out_arr, bpm):
     assert(len(mnd_arr) == len(out_arr))
     inputs = []
     outputs = []
     maxouts = []
     fulldata = []
     for i in range(LSTM_HISTORY_LENGTH):
-        inputs.append(np.array([0, 0, 0, 0, 0]))
+        inputs.append(np.array([0, 0, 0, 0, 0, bpm]))
         maxouts.append([0, 0, 0, 0])
         outputs.append(to_categorical([0, 0, 0, 0],4))
     for pos in range(len(mnd_arr)):
         i = pos+LSTM_HISTORY_LENGTH
+        mnd_arr[pos].append(bpm)
         inputs.append(mnd_arr[pos])
         outputs.append(out_arr[pos])
         maxouts.append(np.argmax(out_arr[pos],axis=1))
         yield ((np.array(inputs[i]), np.array(maxouts[pos:i])), np.array(outputs[i]))
 
-gen = song_data()
+gen = song_data(skipname)
 while True: #true epoch count AKA number of songs to process
-    (name, (mnd, out)) = next(gen)
+    (name, bpm, (mnd, out)) = next(gen)
     print(name)
-    all_data = generate_song_inout_data(mnd, out)
+    all_data = generate_song_inout_data(mnd, out, bpm)
     (ins, outs) = zip(*all_data)
     (in_mnd, in_hist) = zip(*ins)
     (outL, outU, outD, outR) = zip(*outs)
-    model.fit(x=[in_mnd,in_hist], y=[outL, outU, outD, outR],epochs=8, batch_size=128)
+    model.fit(x=[in_mnd,in_hist], y=[outL, outU, outD, outR],epochs=2, batch_size=1024)
     print("saving model")
     model.save("ddr_model.h5")
+    model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted
     print("saving complete")
