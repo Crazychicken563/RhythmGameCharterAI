@@ -45,7 +45,7 @@ history = [[0, 0, 0, 0]]*LSTM_HISTORY_LENGTH
 last_time = 0
 for i in range(len(raw_data)):
     (time_point, note, start_long, end_long) = raw_data[i]
-    next_time = raw_data[i+1][0] if i+1 < len(raw_data) else time_point+1920
+    next_time = raw_data[i+1][0] if i+1 < len(raw_data) else time_point+(192*5)
     beat_fract = beat_find(time_point)
     mnd_in = np.array([time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm],dtype="float32",ndmin=2)
     last_time = time_point

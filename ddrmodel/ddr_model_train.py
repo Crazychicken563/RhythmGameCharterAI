@@ -16,6 +16,7 @@ import numpy as np
 import random
 import sys
 import io
+import pickle
 #Note: Requires both ddr_finder and ddr_to_generic to be run first
 #will dynamically construct both the MND's data and the output to compare against
 #Current input is purely the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4
@@ -30,6 +31,7 @@ def song_data(skipto = ""):
             else:
                 continue
         name = os.path.relpath(dirpath, source_dir)
+        print(name)
         if len(dirnames) > 5:
             print(">Subdirectories found in "+name+", continuing.")
             continue
@@ -54,7 +56,7 @@ def song_data(skipto = ""):
                     chart.seek(int(position))
                     this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+"_"+position+".mnd")
                     if os.path.exists(this_difficulty_file):
-                        yield (this_difficulty_file,float(bpm),mnd_data(chart))
+                        yield (float(bpm),mnd_data(chart))
 
 
 def mnd_data(chart):
@@ -82,7 +84,7 @@ def mnd_data(chart):
                 #Counting rolls (4) as long notes
                 end_long = notes.count("3")
                 if (note or start_long or end_long):
-                    notes = notes.replace("M","0").replace("4","2")
+                    notes = notes.replace("M","0").replace("4","2").replace("K","0").replace("L","0").replace("F","0")
                     tmp = list(map(lambda x: to_categorical(x, num_classes=4,dtype="int32"),notes))
                     output.append(tmp)
                     mnd_data.append((time_point, note, start_long, end_long))
@@ -99,12 +101,11 @@ LSTM_HISTORY_LENGTH = 64
 
 mnd_input = layers.Input(shape=(7,),name="mnd_input")
 x = layers.Dense(32)(mnd_input)
-x = layers.Dense(32)(x)
+x = layers.Dense(64)(x)
 hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,4,),name="hist_input")
-hist_lstm = layers.LSTM(32)(hist_input)
+hist_lstm = layers.LSTM(48)(hist_input)
 x = layers.concatenate([x,hist_lstm])
-x = layers.Dense(32)(x)
-x = layers.Dense(32)(x)
+x = layers.Dense(64)(x)
 x = layers.Dense(32)(x)
 outL = layers.Dense(4, activation='softmax', name = "outL")(x)
 outU = layers.Dense(4, activation='softmax', name = "outU")(x)
@@ -117,12 +118,9 @@ model = models.Model(inputs=[mnd_input,hist_input],outputs=[outL,outU,outD,outR]
 
 model.compile(loss='categorical_crossentropy', optimizer=optimizer)
 
-skipname = ""
 if len(sys.argv) > 1:
     if sys.argv[1] == "LOAD":
         model = load_model("ddr_model.h5")
-    if len(sys.argv) > 2:
-        skipname = sys.argv[2]
 
 def beat_find(time_point):
     for tt in [48, 24, 16, 12, 8, 6, 4, 3, 2, 1]: #time_resolution of individual notes
@@ -145,7 +143,7 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
         i = pos+LSTM_HISTORY_LENGTH
         (time_point, note, start_long, end_long) = mnd_arr[pos]
         beat_fract = beat_find(time_point)
-        next_time = mnd_arr[pos+1][0] if i+1 < len(mnd_arr) else time_point+1920
+        next_time = mnd_arr[pos+1][0] if i+1 < len(mnd_arr) else time_point+(192*5)
         mnd_data = np.array([time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm])
         last_time = time_point
         inputs.append(mnd_data)
@@ -153,18 +151,44 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
         maxouts.append(np.argmax(out_arr[pos],axis=1))
         yield ((np.array(inputs[i]), np.array(maxouts[pos:i])), np.array(outputs[i]))
 
-def metagen(skipname):
-    gen = song_data(skipname)
+def generate_dataset():
+    gen = song_data()
+    dataset = []
+    try:
+        while True:
+            dataset.append(next(gen))
+    except StopIteration:
+        pass
+    
+    pickle.dump(dataset, open("ddr_dataset.p","wb"))
+    return dataset
+
+def huge_full_dataset():
+    if os.path.exists("ddr_dataset.p"):
+        print("loading dataset")
+        dataset = pickle.load(open("ddr_dataset.p","rb"))
+        print("dataset loaded!")
+    else:
+        dataset = generate_dataset()
     in_mnd_set = []
     in_hist_set = []
     outL_set = []
     outU_set = []
     outD_set = []
     outR_set = []
-    
+    bag = []
+    max = len(dataset)
+    print("dataset length: "+str(max))
     while True:
-        (name, bpm, (mnd, out)) = next(gen)
-        print(name)
+        if len(bag) == 0:
+            bag = list(range(len(dataset)))
+            random.shuffle(bag)
+        dataID = bag.pop()
+        data = dataset[dataID]
+        (bpm, (mnd, out)) = data
+        if len(mnd) < 16:
+            print(dataID)
+            continue
         all_data = generate_song_inout_data(mnd, out, bpm)
         (ins, outs) = zip(*all_data)
         (in_mnd, in_hist) = zip(*ins)
@@ -175,18 +199,19 @@ def metagen(skipname):
         outU_set.extend(outU)
         outD_set.extend(outD)
         outR_set.extend(outR)
-        if (len(outL_set) > 6000):
-            yield ([in_mnd_set,in_hist_set],[outL_set,outU_set,outD_set,outR_set])
+        if (len(outL_set) > 200000):
+            yield ((np.array(in_mnd_set),np.array(in_hist_set)),
+                (np.array(outL_set),np.array(outU_set),np.array(outD_set),np.array(outR_set)))
             in_mnd_set = []
             in_hist_set = []
             outL_set = []
             outU_set = []
             outD_set = []
             outR_set = []
-    
-mgen = metagen(skipname)
+
+huge_gen = huge_full_dataset()
 while True: #true epoch count AKA number of songs to process
-    (ins, outs) = next(mgen)
-    model.fit(x=ins, y=outs, batch_size=8192)
+    (ins, outs) = next(huge_gen)
+    model.fit(ins,outs,epochs=10,batch_size=2048)
     model.save("ddr_model.h5")
     model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted
