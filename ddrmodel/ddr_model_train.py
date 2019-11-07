@@ -1,4 +1,4 @@
-#current training paused at "One Bite"
+#BAAM
 import os
 import re
 
@@ -85,14 +85,7 @@ def mnd_data(chart):
                     notes = notes.replace("M","0").replace("4","2")
                     tmp = list(map(lambda x: to_categorical(x, num_classes=4,dtype="int32"),notes))
                     output.append(tmp)
-                    for t in [48, 24, 16, 12, 8, 6, 4, 3, 2, 1]: #time_resolution of individual notes
-                        if time_point%t == 0:
-                            beat_fract = t
-                            break
-                    else:
-                        print("beat_fract nonsensical (nonint?)")
-                        return False
-                    mnd_data.append([time_point-last_time, beat_fract, note, start_long, end_long])
+                    mnd_data.append((time_point, note, start_long, end_long))
                     last_time = time_point
                 time_point += time_resolution
             stored_lines = []
@@ -104,11 +97,13 @@ def mnd_data(chart):
 
 LSTM_HISTORY_LENGTH = 64
 
-mnd_input = layers.Input(shape=(6,),name="mnd_input")
+mnd_input = layers.Input(shape=(7,),name="mnd_input")
 x = layers.Dense(32)(mnd_input)
+x = layers.Dense(32)(x)
 hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,4,),name="hist_input")
 hist_lstm = layers.LSTM(32)(hist_input)
 x = layers.concatenate([x,hist_lstm])
+x = layers.Dense(32)(x)
 x = layers.Dense(32)(x)
 x = layers.Dense(32)(x)
 outL = layers.Dense(4, activation='softmax', name = "outL")(x)
@@ -129,6 +124,12 @@ if len(sys.argv) > 1:
     if len(sys.argv) > 2:
         skipname = sys.argv[2]
 
+def beat_find(time_point):
+    for tt in [48, 24, 16, 12, 8, 6, 4, 3, 2, 1]: #time_resolution of individual notes
+        if time_point%tt == 0:
+            return tt
+    raise Exception(f"beat_frac {time_point} not int")
+    
 def generate_song_inout_data(mnd_arr, out_arr, bpm):
     assert(len(mnd_arr) == len(out_arr))
     inputs = []
@@ -136,27 +137,56 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
     maxouts = []
     fulldata = []
     for i in range(LSTM_HISTORY_LENGTH):
-        inputs.append(np.array([0, 0, 0, 0, 0, bpm]))
+        inputs.append(np.array([0, 0, 0, 0, 0, 0, bpm]))
         maxouts.append([0, 0, 0, 0])
         outputs.append(to_categorical([0, 0, 0, 0],4))
+    last_time = 0
     for pos in range(len(mnd_arr)):
         i = pos+LSTM_HISTORY_LENGTH
-        mnd_arr[pos].append(bpm)
-        inputs.append(mnd_arr[pos])
+        (time_point, note, start_long, end_long) = mnd_arr[pos]
+        beat_fract = beat_find(time_point)
+        next_time = mnd_arr[pos+1][0] if i+1 < len(mnd_arr) else time_point+1920
+        mnd_data = np.array([time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm])
+        last_time = time_point
+        inputs.append(mnd_data)
         outputs.append(out_arr[pos])
         maxouts.append(np.argmax(out_arr[pos],axis=1))
         yield ((np.array(inputs[i]), np.array(maxouts[pos:i])), np.array(outputs[i]))
 
-gen = song_data(skipname)
+def metagen(skipname):
+    gen = song_data(skipname)
+    in_mnd_set = []
+    in_hist_set = []
+    outL_set = []
+    outU_set = []
+    outD_set = []
+    outR_set = []
+    
+    while True:
+        (name, bpm, (mnd, out)) = next(gen)
+        print(name)
+        all_data = generate_song_inout_data(mnd, out, bpm)
+        (ins, outs) = zip(*all_data)
+        (in_mnd, in_hist) = zip(*ins)
+        (outL, outU, outD, outR) = zip(*outs)
+        in_mnd_set.extend(in_mnd)
+        in_hist_set.extend(in_hist)
+        outL_set.extend(outL)
+        outU_set.extend(outU)
+        outD_set.extend(outD)
+        outR_set.extend(outR)
+        if (len(outL_set) > 6000):
+            yield ([in_mnd_set,in_hist_set],[outL_set,outU_set,outD_set,outR_set])
+            in_mnd_set = []
+            in_hist_set = []
+            outL_set = []
+            outU_set = []
+            outD_set = []
+            outR_set = []
+    
+mgen = metagen(skipname)
 while True: #true epoch count AKA number of songs to process
-    (name, bpm, (mnd, out)) = next(gen)
-    print(name)
-    all_data = generate_song_inout_data(mnd, out, bpm)
-    (ins, outs) = zip(*all_data)
-    (in_mnd, in_hist) = zip(*ins)
-    (outL, outU, outD, outR) = zip(*outs)
-    model.fit(x=[in_mnd,in_hist], y=[outL, outU, outD, outR],epochs=2, batch_size=1024)
-    print("saving model")
+    (ins, outs) = next(mgen)
+    model.fit(x=ins, y=outs, batch_size=8192)
     model.save("ddr_model.h5")
     model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted
-    print("saving complete")

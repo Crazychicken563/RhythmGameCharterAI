@@ -29,51 +29,52 @@ def beat_find(time_point):
             return tt
     raise Exception(f"beat_frac {time_point} not int")
 
-jumps = 0
-lrjumps = 0
-udjumps = 0
-timepoints = []
+raw_data = []
 with open(path, mode='r', encoding="utf-8") as generic:
     songpath = generic.readline()
     bpm = generic.readline()
     offset = generic.readline()
-    last_time = 0
-    history = [[0, 0, 0, 0]]*LSTM_HISTORY_LENGTH
-    while True:
-        line = generic.readline()
-        if len(line) == 0:
-            break
+    for line in generic:
         line_data = line.split()
-        (time_point, note, start_long, end_long) = (int(x) for x in line_data)
-        beat_fract = beat_find(time_point)
-        mnd_in = np.array([time_point-last_time, beat_fract, note, start_long, end_long, bpm],dtype="float32",ndmin=2)
-        last_time = time_point
-        hs = len(history)
-        hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
-        probs = model.predict([mnd_in,hist_in])
-        (l,u,d,r) = (x[0].astype('float') for x in probs)
-        available = {'l':l,'u':u,'d':d,'r':r}
-        out = {'l':0,'u':0,'d':0,'r':0}
-        for i, r in ((3, end_long),(2, start_long),(1, note)):
-          for _ in range(r):
-              best_v = 0
-              for k, v in available.items():
-                  if v[i] > best_v:
-                      best_k = k
-                      best_v = v[i]
-              out[best_k] = i
-              del available[best_k]
-        (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
-        print(mnd_in,[L,U,D,R])
-        #print(list(x[0].astype('float') for x in probs))
-        history.append([L,U,D,R])
-        timepoints.append(time_point)
-        if (note+start_long == 2):
-            jumps += 1
-            if (U>0 and D>0):
-                udjumps += 1
-            if (L>0 and R>0):
-                lrjumps += 1
+        raw_data.append(tuple(int(x) for x in line_data))
+jumps = 0
+lrjumps = 0
+udjumps = 0
+timepoints = []
+history = [[0, 0, 0, 0]]*LSTM_HISTORY_LENGTH
+last_time = 0
+for i in range(len(raw_data)):
+    (time_point, note, start_long, end_long) = raw_data[i]
+    next_time = raw_data[i+1][0] if i+1 < len(raw_data) else time_point+1920
+    beat_fract = beat_find(time_point)
+    mnd_in = np.array([time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm],dtype="float32",ndmin=2)
+    last_time = time_point
+    hs = len(history)
+    hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
+    probs = model.predict([mnd_in,hist_in])
+    (l,u,d,r) = (x[0].astype('float') for x in probs)
+    available = {'l':l,'u':u,'d':d,'r':r}
+    out = {'l':0,'u':0,'d':0,'r':0}
+    for i, r in ((3, end_long),(2, start_long),(1, note)):
+      for _ in range(r):
+          best_v = 0
+          for k, v in available.items():
+              if v[i] > best_v:
+                  best_k = k
+                  best_v = v[i]
+          out[best_k] = i
+          del available[best_k]
+    (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
+    print(mnd_in,[L,U,D,R])
+    #print(list(x[0].astype('float') for x in probs))
+    history.append([L,U,D,R])
+    timepoints.append(time_point)
+    if (note+start_long == 2):
+        jumps += 1
+        if (U>0 and D>0):
+            udjumps += 1
+        if (L>0 and R>0):
+            lrjumps += 1
 print(jumps,udjumps,lrjumps)
 with open("output.sm", mode='w', encoding="utf-8") as out:
     curr_t = 0
@@ -97,7 +98,7 @@ with open("output.sm", mode='w', encoding="utf-8") as out:
                 out.write(tmp+"\n")
                 print(tmp,beat_offset*buf_res+curr_t)
             out.write(",\n")
-            print(",")
+            print(";" if (i == len(timepoints)) else ",")
             #clear current
             buf_res = 48
             buf_notes.clear()
