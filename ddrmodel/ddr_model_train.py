@@ -97,15 +97,16 @@ def mnd_data(chart):
         if ";" in line:
             return (mnd_data, output)
 
-LSTM_HISTORY_LENGTH = 64
+LSTM_HISTORY_LENGTH = 48
 
 mnd_input = layers.Input(shape=(7,),name="mnd_input")
-x = layers.Dense(32)(mnd_input)
+x = layers.Dense(24)(mnd_input)
 hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,11,),name="hist_input")
-hist_lstm = layers.LSTM(64)(hist_input)
+hist_dense = layers.TimeDistributed(Dense(16))(hist_input)
+hist_lstm = layers.LSTM(48)(hist_dense)
 x = layers.concatenate([x,hist_lstm])
 x = layers.Dense(32)(x)
-x = layers.Dense(32)(x)
+x = layers.Dense(24)(x)
 outL = layers.Dense(4, activation='softmax', name = "outL")(x)
 outU = layers.Dense(4, activation='softmax', name = "outU")(x)
 outD = layers.Dense(4, activation='softmax', name = "outD")(x)
@@ -141,10 +142,10 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
         (time_point, note, start_long, end_long) = mnd_arr[pos]
         beat_fract = beat_find(time_point)
         next_time = mnd_arr[pos+1][0] if i+1 < len(mnd_arr) else time_point+(192*5)
-        mnd_data = [time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm]
+        mnd_data = [(time_point-last_time)/(192*5), (next_time-time_point)/(192*5), beat_fract/48, note/4, start_long/4, end_long/4, bpm/400]
         last_time = time_point
         input_mnd_aux = mnd_data.copy()
-        mnd_data.extend(np.argmax(out_arr[pos],axis=1))
+        mnd_data.extend(np.argmax(out_arr[pos],axis=1)/3)
         inputs.append(np.array(mnd_data))
         outputs.append(out_arr[pos])
         yield ((input_mnd_aux, np.array(inputs[pos:i])), np.array(outputs[i]))
@@ -196,7 +197,7 @@ def huge_full_dataset():
         outU_set.extend(outU)
         outD_set.extend(outD)
         outR_set.extend(outR)
-        if (len(outL_set) > 200000):
+        if (len(outL_set) > 400000):
             yield ((np.array(in_mnd_set),np.array(in_hist_set)),
                 (np.array(outL_set),np.array(outU_set),np.array(outD_set),np.array(outR_set)))
             in_mnd_set = []
@@ -209,6 +210,6 @@ def huge_full_dataset():
 huge_gen = huge_full_dataset()
 while True: #true epoch count AKA number of songs to process
     (ins, outs) = next(huge_gen)
-    model.fit(ins,outs,epochs=10,batch_size=2048)
+    model.fit(ins,outs,epochs=4,batch_size=256)
     model.save("ddr_model.h5")
     model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted

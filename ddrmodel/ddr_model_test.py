@@ -14,7 +14,7 @@ import sys
 import io
 model = load_model("ddr_model.h5")
 
-LSTM_HISTORY_LENGTH = 64
+LSTM_HISTORY_LENGTH = 48
 
 if len(sys.argv) > 1:
   path = sys.argv[1]
@@ -68,8 +68,8 @@ for i in range(len(raw_data)):
     (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
     print(mnd_in,[L,U,D,R])
     #print(list(x[0].astype('float') for x in probs))
-    hist_data = [time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm]
-    hist_data.extend([L,U,D,R])
+    hist_data = [(time_point-last_time)/(192*5), (next_time-time_point)/(192*5), beat_fract/48, note/4, start_long/4, end_long/4, bpm/400]
+    hist_data.extend([L,U,D,R]/3)
     history.append(hist_data)
     timepoints.append(time_point)
     if (note+start_long == 2):
