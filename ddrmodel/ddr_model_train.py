@@ -101,11 +101,10 @@ LSTM_HISTORY_LENGTH = 48
 mnd_input = layers.Input(shape=(7,),name="mnd_input")
 x = layers.Dense(32)(mnd_input)
 hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,11,),name="hist_input")
-hist_dense = layers.TimeDistributed(Dense(32))(hist_input)
-hist_dense2 = layers.TimeDistributed(Dense(32))(hist_dense)
-hist_lstm = layers.LSTM(32)(hist_dense2)
+hist_lstm = layers.LSTM(48,return_sequences=True)(hist_input)
+hist_lstm = layers.LSTM(32)(hist_lstm)
 x = layers.concatenate([x,hist_lstm])
-x = layers.Dense(32)(x)
+x = layers.Dense(64)(x)
 x = layers.Dense(32)(x)
 outL = layers.Dense(4, activation='softmax', name = "outL")(x)
 outU = layers.Dense(4, activation='softmax', name = "outU")(x)
@@ -231,6 +230,6 @@ def huge_full_dataset():
 huge_gen = huge_full_dataset()
 while True: #true epoch count AKA number of songs to process
     (ins, outs) = next(huge_gen)
-    model.fit(ins,outs,epochs=4,batch_size=256)
+    model.fit(ins,outs,epochs=4,batch_size=512)
     model.save("ddr_model.h5")
     model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted
