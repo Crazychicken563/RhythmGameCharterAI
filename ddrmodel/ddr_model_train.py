@@ -1,4 +1,3 @@
-#BAAM
 import os
 import re
 
@@ -100,13 +99,14 @@ def mnd_data(chart):
 LSTM_HISTORY_LENGTH = 48
 
 mnd_input = layers.Input(shape=(7,),name="mnd_input")
-x = layers.Dense(24)(mnd_input)
+x = layers.Dense(32)(mnd_input)
 hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,11,),name="hist_input")
-hist_dense = layers.TimeDistributed(Dense(16))(hist_input)
-hist_lstm = layers.LSTM(48)(hist_dense)
+hist_dense = layers.TimeDistributed(Dense(32))(hist_input)
+hist_dense2 = layers.TimeDistributed(Dense(32))(hist_dense)
+hist_lstm = layers.LSTM(32)(hist_dense2)
 x = layers.concatenate([x,hist_lstm])
 x = layers.Dense(32)(x)
-x = layers.Dense(24)(x)
+x = layers.Dense(32)(x)
 outL = layers.Dense(4, activation='softmax', name = "outL")(x)
 outU = layers.Dense(4, activation='softmax', name = "outU")(x)
 outD = layers.Dense(4, activation='softmax', name = "outD")(x)
@@ -121,6 +121,10 @@ model.compile(loss='categorical_crossentropy', optimizer=optimizer)
 if len(sys.argv) > 1:
     if sys.argv[1] == "LOAD":
         model = load_model("ddr_model.h5")
+        #If loading from disk, assume the model is reasonably-trained and use the slower but "better" SGD algorithm
+        optimizer = keras.optimizers.SGD(nesterov=True)
+        model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+        
 
 def beat_find(time_point):
     for tt in [48, 24, 16, 12, 8, 6, 4, 3, 2, 1]: #time_resolution of individual notes
@@ -148,7 +152,20 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
         mnd_data.extend(np.argmax(out_arr[pos],axis=1)/3)
         inputs.append(np.array(mnd_data))
         outputs.append(out_arr[pos])
-        yield ((input_mnd_aux, np.array(inputs[pos:i])), np.array(outputs[i]))
+        in_arr = np.array(inputs[pos:i])
+        out_dat = np.array(outputs[i])
+        #data augmentation: flip L/R, U/D, and both
+        yield ((input_mnd_aux, in_arr), out_dat)
+        out_dat[[0,3]] = out_dat[[3,0]]
+        in_arr[:,[7,10]] = in_arr[:,[10,7]]
+        yield ((input_mnd_aux, in_arr), out_dat)
+        out_dat[[1,2]] = out_dat[[1,2]]
+        in_arr[:,[8,9]] = in_arr[:,[8,9]]
+        yield ((input_mnd_aux, in_arr), out_dat)
+        out_dat[[0,3]] = out_dat[[3,0]]
+        in_arr[:,[7,10]] = in_arr[:,[10,7]]
+        yield ((input_mnd_aux, in_arr), out_dat)
+        
 
 def generate_dataset(n = sys.maxsize):
     gen = song_data()
@@ -161,6 +178,8 @@ def generate_dataset(n = sys.maxsize):
     return dataset
 
 def huge_full_dataset():
+    #load dataset from disk (from many files into one)
+    #may need modification once I add audio data
     if os.path.exists("ddr_dataset.p"):
         print("loading dataset")
         dataset = pickle.load(open("ddr_dataset.p","rb"))
@@ -176,6 +195,8 @@ def huge_full_dataset():
     outR_set = []
     bag = []
     max = len(dataset)
+    #Creates "super-batches" due to memory limitations
+    #Currently sized for ~8GB of usable memory)
     while True:
         if len(bag) == 0:
             print("reloading dataset bag: size="+str(max))

@@ -19,7 +19,7 @@ LSTM_HISTORY_LENGTH = 48
 if len(sys.argv) > 1:
   path = sys.argv[1]
 else:
-  path = "../preprocessing/ddr_data/In The Groove/Anubis/c6_5820.mnd"
+  path = "../preprocessing/ddr_data/In The Groove/Anubis/c8_520.mnd"
 
 np.set_printoptions(precision=4,suppress=True)
 
@@ -32,7 +32,7 @@ def beat_find(time_point):
 raw_data = []
 with open(path, mode='r', encoding="utf-8") as generic:
     songpath = generic.readline()
-    bpm = generic.readline()
+    bpm = float(generic.readline())
     offset = generic.readline()
     for line in generic:
         line_data = line.split()
@@ -42,16 +42,18 @@ lrjumps = 0
 udjumps = 0
 timepoints = []
 history = [np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])]*LSTM_HISTORY_LENGTH
+notehistory = []
 last_time = 0
 for i in range(len(raw_data)):
     (time_point, note, start_long, end_long) = raw_data[i]
     next_time = raw_data[i+1][0] if i+1 < len(raw_data) else time_point+(192*5)
     beat_fract = beat_find(time_point)
-    mnd_in = np.array([time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm],dtype="float32",ndmin=2)
+    mnd_in = [(time_point-last_time)/(192*5), (next_time-time_point)/(192*5), beat_fract/48, note/4, start_long/4, end_long/4, bpm/400]
+    parsed_mnd_in = np.array(mnd_in,dtype="float32",ndmin=2)
     last_time = time_point
     hs = len(history)
     hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
-    probs = model.predict([mnd_in,hist_in])
+    probs = model.predict([np.array(parsed_mnd_in),hist_in])
     (l,u,d,r) = (x[0].astype('float') for x in probs)
     available = {'l':l,'u':u,'d':d,'r':r}
     out = {'l':0,'u':0,'d':0,'r':0}
@@ -66,11 +68,11 @@ for i in range(len(raw_data)):
           out[chosen] = i
           del available[chosen]
     (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
-    print(mnd_in,[L,U,D,R])
-    #print(list(x[0].astype('float') for x in probs))
-    hist_data = [(time_point-last_time)/(192*5), (next_time-time_point)/(192*5), beat_fract/48, note/4, start_long/4, end_long/4, bpm/400]
-    hist_data.extend([L,U,D,R]/3)
-    history.append(hist_data)
+    #print([L,U,D,R],mnd_in)
+    print([L,U,D,R],list(x[0].astype('float') for x in probs))
+    mnd_in.extend([L/3,U/3,D/3,R/3])
+    history.append(mnd_in)
+    notehistory.append([L,U,D,R])
     timepoints.append(time_point)
     if (note+start_long == 2):
         jumps += 1
@@ -88,7 +90,7 @@ with open("output.sm", mode='w', encoding="utf-8") as out:
             (l,u,d,r) = (0,0,0,0)
             t = curr_t+192
         else:
-            (l,u,d,r) = history[LSTM_HISTORY_LENGTH+i][7:11]
+            (l,u,d,r) = notehistory[i]
             t = timepoints[i]
         if (curr_t+192 <= t):
             #blank measures
@@ -99,7 +101,7 @@ with open("output.sm", mode='w', encoding="utf-8") as out:
             for beat_offset in range(192//buf_res):
                 tmp = buf_notes.get(beat_offset*buf_res+curr_t, "0000")
                 out.write(tmp+"\n")
-                print(tmp,beat_offset*buf_res+curr_t)
+                #print(tmp,beat_offset*buf_res+curr_t)
             out.write(";\n" if (i == len(timepoints)) else ",\n")
             #clear current
             buf_res = 48
@@ -108,5 +110,5 @@ with open("output.sm", mode='w', encoding="utf-8") as out:
         buf_notes[t] = f"{l}{u}{d}{r}"
         res = beat_find(t)
         buf_res = min(res, buf_res)
-        print(l,u,d,r,t,beat_find(t),res)
+        #print(l,u,d,r,t,beat_find(t),res)
 print("Done!")

@@ -8,3 +8,6 @@ BeatSaber/.vscode
 BeatSaber/samples
 BeatSaber/samples_window
 .vscode
+*.p
+*BACKUP.h5
+output.sm
