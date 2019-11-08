@@ -101,11 +101,10 @@ LSTM_HISTORY_LENGTH = 64
 
 mnd_input = layers.Input(shape=(7,),name="mnd_input")
 x = layers.Dense(32)(mnd_input)
-x = layers.Dense(64)(x)
-hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,4,),name="hist_input")
-hist_lstm = layers.LSTM(48)(hist_input)
+hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,11,),name="hist_input")
+hist_lstm = layers.LSTM(64)(hist_input)
 x = layers.concatenate([x,hist_lstm])
-x = layers.Dense(64)(x)
+x = layers.Dense(32)(x)
 x = layers.Dense(32)(x)
 outL = layers.Dense(4, activation='softmax', name = "outL")(x)
 outU = layers.Dense(4, activation='softmax', name = "outU")(x)
@@ -132,11 +131,9 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
     assert(len(mnd_arr) == len(out_arr))
     inputs = []
     outputs = []
-    maxouts = []
     fulldata = []
     for i in range(LSTM_HISTORY_LENGTH):
-        inputs.append(np.array([0, 0, 0, 0, 0, 0, bpm]))
-        maxouts.append([0, 0, 0, 0])
+        inputs.append(np.array([0, 0, 0, 0, 0, 0, bpm,0,0,0,0]))
         outputs.append(to_categorical([0, 0, 0, 0],4))
     last_time = 0
     for pos in range(len(mnd_arr)):
@@ -144,23 +141,22 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
         (time_point, note, start_long, end_long) = mnd_arr[pos]
         beat_fract = beat_find(time_point)
         next_time = mnd_arr[pos+1][0] if i+1 < len(mnd_arr) else time_point+(192*5)
-        mnd_data = np.array([time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm])
+        mnd_data = [time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm]
         last_time = time_point
-        inputs.append(mnd_data)
+        input_mnd_aux = mnd_data.copy()
+        mnd_data.extend(np.argmax(out_arr[pos],axis=1))
+        inputs.append(np.array(mnd_data))
         outputs.append(out_arr[pos])
-        maxouts.append(np.argmax(out_arr[pos],axis=1))
-        yield ((np.array(inputs[i]), np.array(maxouts[pos:i])), np.array(outputs[i]))
+        yield ((input_mnd_aux, np.array(inputs[pos:i])), np.array(outputs[i]))
 
-def generate_dataset():
+def generate_dataset(n = sys.maxsize):
     gen = song_data()
     dataset = []
     try:
-        while True:
+        for _ in range(n):
             dataset.append(next(gen))
     except StopIteration:
         pass
-    
-    pickle.dump(dataset, open("ddr_dataset.p","wb"))
     return dataset
 
 def huge_full_dataset():
@@ -170,6 +166,7 @@ def huge_full_dataset():
         print("dataset loaded!")
     else:
         dataset = generate_dataset()
+        pickle.dump(dataset, open("ddr_dataset.p","wb"))
     in_mnd_set = []
     in_hist_set = []
     outL_set = []
@@ -178,9 +175,9 @@ def huge_full_dataset():
     outR_set = []
     bag = []
     max = len(dataset)
-    print("dataset length: "+str(max))
     while True:
         if len(bag) == 0:
+            print("reloading dataset bag: size="+str(max))
             bag = list(range(len(dataset)))
             random.shuffle(bag)
         dataID = bag.pop()

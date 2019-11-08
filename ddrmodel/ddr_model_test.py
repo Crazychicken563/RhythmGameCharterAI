@@ -41,7 +41,7 @@ jumps = 0
 lrjumps = 0
 udjumps = 0
 timepoints = []
-history = [[0, 0, 0, 0]]*LSTM_HISTORY_LENGTH
+history = [np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])]*LSTM_HISTORY_LENGTH
 last_time = 0
 for i in range(len(raw_data)):
     (time_point, note, start_long, end_long) = raw_data[i]
@@ -57,17 +57,20 @@ for i in range(len(raw_data)):
     out = {'l':0,'u':0,'d':0,'r':0}
     for i, r in ((3, end_long),(2, start_long),(1, note)):
       for _ in range(r):
-          best_v = 0
+          pop = []
+          weights = []
           for k, v in available.items():
-              if v[i] > best_v:
-                  best_k = k
-                  best_v = v[i]
-          out[best_k] = i
-          del available[best_k]
+              pop.append(k)
+              weights.append(pow(v[i],2))
+          chosen = random.choices(pop, weights)[0]
+          out[chosen] = i
+          del available[chosen]
     (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
     print(mnd_in,[L,U,D,R])
     #print(list(x[0].astype('float') for x in probs))
-    history.append([L,U,D,R])
+    hist_data = [time_point-last_time, next_time-time_point, beat_fract, note, start_long, end_long, bpm]
+    hist_data.extend([L,U,D,R])
+    history.append(hist_data)
     timepoints.append(time_point)
     if (note+start_long == 2):
         jumps += 1
@@ -85,7 +88,7 @@ with open("output.sm", mode='w', encoding="utf-8") as out:
             (l,u,d,r) = (0,0,0,0)
             t = curr_t+192
         else:
-            (l,u,d,r) = history[LSTM_HISTORY_LENGTH+i]
+            (l,u,d,r) = history[LSTM_HISTORY_LENGTH+i][7:11]
             t = timepoints[i]
         if (curr_t+192 <= t):
             #blank measures
@@ -97,8 +100,7 @@ with open("output.sm", mode='w', encoding="utf-8") as out:
                 tmp = buf_notes.get(beat_offset*buf_res+curr_t, "0000")
                 out.write(tmp+"\n")
                 print(tmp,beat_offset*buf_res+curr_t)
-            out.write(",\n")
-            print(";" if (i == len(timepoints)) else ",")
+            out.write(";\n" if (i == len(timepoints)) else ",\n")
             #clear current
             buf_res = 48
             buf_notes.clear()
