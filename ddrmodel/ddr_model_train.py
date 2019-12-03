@@ -1,27 +1,21 @@
 import os
 import re
 
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras.callbacks import LambdaCallback
-#from tensorflow.keras.models import Sequential
-from tensorflow.keras import layers
-from tensorflow.keras import models
-from tensorflow.keras.layers import *
-from tensorflow.keras.optimizers import RMSprop
-from tensorflow.keras.models import load_model
-from keras.utils import to_categorical
-import numpy as np
 import random
 import sys
 import io
 import pickle
+from shared_ddr_processing import *
+import multiprocessing
+from multiprocessing import Pool
 #Note: Requires both ddr_finder and ddr_to_generic to be run first
 #will dynamically construct both the MND's data and the output to compare against
-#Current input is purely the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4
-#none is used only for start of song data
-#Later revision will use the actual song data as well, but that is not included in this prototype
+#Current input is the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4, MND data for both past arrows and the new step, and a very small amount of audio data around the new step
+#start of song data has a ton of 0 (except for BPM)
 source_dir = "../preprocessing/ddr_data"
+songs_per = 1000
+
+#Returns a list of charts to be used later (this is cached in ddr_dataset.p)
 def song_data(skipto = ""):
     for (dirpath, dirnames, filenames) in os.walk(source_dir):
         if skipto != "":
@@ -52,13 +46,12 @@ def song_data(skipto = ""):
                         break
                     (difficulty, position) = tmp.strip().split("@")
                     difficulty = difficulty.strip(":")
-                    chart.seek(int(position))
                     this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+"_"+position+".mnd")
                     if os.path.exists(this_difficulty_file):
-                        yield (float(bpm),mnd_data(chart))
+                        yield (float(bpm),float(offset),int(position),dirpath,chart_path,music_path)
 
 
-def mnd_data(chart):
+def mnd_getdata(chart):
     #Assumes chart is valid and was seek()'d to already
     time_point = 0
     stored_lines = []
@@ -84,7 +77,8 @@ def mnd_data(chart):
                 end_long = notes.count("3")
                 if (note or start_long or end_long):
                     notes = notes.replace("M","0").replace("4","2").replace("K","0").replace("L","0").replace("F","0")
-                    tmp = list(map(lambda x: to_categorical(x, num_classes=4,dtype="int32"),notes))
+                    tmp = list(map(lambda x: np.eye(4)[int(x)],notes)) #to_categorical hack 
+                    #https://stackoverflow.com/questions/49684379/numpy-equivalent-to-keras-function-utils-to-categorical
                     output.append(tmp)
                     mnd_data.append((time_point, note, start_long, end_long))
                     last_time = time_point
@@ -96,49 +90,19 @@ def mnd_data(chart):
         if ";" in line:
             return (mnd_data, output)
 
-LSTM_HISTORY_LENGTH = 48
-
-mnd_input = layers.Input(shape=(7,),name="mnd_input")
-x = layers.Dense(32)(mnd_input)
-hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,11,),name="hist_input")
-hist_lstm = layers.LSTM(48,return_sequences=True)(hist_input)
-hist_lstm = layers.LSTM(32)(hist_lstm)
-x = layers.concatenate([x,hist_lstm])
-x = layers.Dense(64)(x)
-x = layers.Dense(32)(x)
-outL = layers.Dense(4, activation='softmax', name = "outL")(x)
-outU = layers.Dense(4, activation='softmax', name = "outU")(x)
-outD = layers.Dense(4, activation='softmax', name = "outD")(x)
-outR = layers.Dense(4, activation='softmax', name = "outR")(x)
-
-#optimizer = RMSprop(learning_rate=0.001)
-optimizer = keras.optimizers.Nadam()
-model = models.Model(inputs=[mnd_input,hist_input],outputs=[outL,outU,outD,outR])
-
-model.compile(loss='categorical_crossentropy', optimizer=optimizer)
-
-if len(sys.argv) > 1:
-    if sys.argv[1] == "LOAD":
-        model = load_model("ddr_model.h5")
-        #If loading from disk, assume the model is reasonably-trained and use the slower but "better" SGD algorithm
-        optimizer = keras.optimizers.SGD(nesterov=True)
-        model.compile(loss='categorical_crossentropy', optimizer=optimizer)
-        
-
-def beat_find(time_point):
-    for tt in [48, 24, 16, 12, 8, 6, 4, 3, 2, 1]: #time_resolution of individual notes
-        if time_point%tt == 0:
-            return tt
-    raise Exception(f"beat_frac {time_point} not int")
-    
-def generate_song_inout_data(mnd_arr, out_arr, bpm):
+#Generator for all of the data involved in a single run of the network
+def generate_song_inout_data(data_tuple):
+    (bpm, offset, position, dirpath, chart_path, music_path) = data_tuple
+    with open(chart_path, encoding="latin-1") as chart:
+        chart.seek(position)
+        (mnd_arr, out_arr) = mnd_getdata(chart)
     assert(len(mnd_arr) == len(out_arr))
+    assert(len(mnd_arr) > 10)
     inputs = []
-    outputs = []
     fulldata = []
+    blank_input = np.array([0, 0, 0, 0, 0, 0, bpm, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])
     for i in range(LSTM_HISTORY_LENGTH):
-        inputs.append(np.array([0, 0, 0, 0, 0, 0, bpm,0,0,0,0]))
-        outputs.append(to_categorical([0, 0, 0, 0],4))
+        inputs.append(blank_input)
     last_time = 0
     for pos in range(len(mnd_arr)):
         i = pos+LSTM_HISTORY_LENGTH
@@ -146,39 +110,76 @@ def generate_song_inout_data(mnd_arr, out_arr, bpm):
         beat_fract = beat_find(time_point)
         next_time = mnd_arr[pos+1][0] if i+1 < len(mnd_arr) else time_point+(192*5)
         mnd_data = [(time_point-last_time)/(192*5), (next_time-time_point)/(192*5), beat_fract/48, note/4, start_long/4, end_long/4, bpm/400]
+        #array: [Time from last to current, time from current to next, beat fraction, basic press count, freeze start count, freeze end count, bpm]
+        #Plus the Left/Up/Down/Right arrows' data (one-hot for output but just data/3 for input)
         last_time = time_point
         input_mnd_aux = mnd_data.copy()
-        mnd_data.extend(np.argmax(out_arr[pos],axis=1)/3)
+        mnd_data.extend(np.ravel(out_arr[pos]))
         inputs.append(np.array(mnd_data))
-        outputs.append(out_arr[pos])
         in_arr = np.array(inputs[pos:i])
-        out_dat = np.array(outputs[i])
-        #data augmentation: flip L/R, U/D, and both
-        yield ((input_mnd_aux, in_arr), out_dat)
-        out_dat[[0,3]] = out_dat[[3,0]]
-        in_arr[:,[7,10]] = in_arr[:,[10,7]]
-        yield ((input_mnd_aux, in_arr), out_dat)
-        out_dat[[1,2]] = out_dat[[1,2]]
-        in_arr[:,[8,9]] = in_arr[:,[8,9]]
-        yield ((input_mnd_aux, in_arr), out_dat)
-        out_dat[[0,3]] = out_dat[[3,0]]
-        in_arr[:,[7,10]] = in_arr[:,[10,7]]
-        yield ((input_mnd_aux, in_arr), out_dat)
+        out_dat = np.array(out_arr[pos])
         
+        #potentially data augmentation: flip L/R, U/D, and both
+        yield ((input_mnd_aux, in_arr), out_dat)
 
-def generate_dataset(n = sys.maxsize):
+#Take in a song_data tuple and return a full set of training data
+def map_data_to_training_data(data_tuple):
+    all_data = generate_song_inout_data(data_tuple)
+    try:
+        (ins, outs) = zip(*all_data)
+    except ValueError:
+        print("BAD DATA: ",data_tuple[3])
+        return ([],[],[],[],[],[],[])
+    (in_mnd, in_hist) = zip(*ins)
+    (outL, outU, outD, outR) = zip(*outs)
+    #disable data augmentation to get more unique songs in memory
+    return (in_mnd, in_hist, outL, outU, outD, outR)
+    #data augmentation: flip LR, then flip UD for 4x data
+    #l_mnd = list(in_mnd)*4
+    #l_audiogram = list(in_audiogram)*4
+    #
+    #l_hist = list(in_hist)
+    #tmp_hist = np.array(l_hist)
+    #tmp_hist[:,:,[7,10]] = tmp_hist[:,:,[10,7]]
+    #l_hist.extend(tmp_hist)
+    #tmp2_hist = np.array(l_hist)
+    #tmp2_hist[:,:,[8,9]] = tmp2_hist[:,:,[9,8]]
+    #l_hist.extend(tmp2_hist)
+    #
+    #tmpL = list(outL)
+    #tmpU = list(outU)
+    #tmpD = list(outD)
+    #tmpR = list(outR)
+    #tmpL.extend(outR)
+    #tmpU.extend(outU)
+    #tmpD.extend(outD)
+    #tmpR.extend(outL)
+    #
+    #tmpL.extend(outL)
+    #tmpU.extend(outD)
+    #tmpD.extend(outU)
+    #tmpR.extend(outR)
+    #
+    #tmpL.extend(outR)
+    #tmpU.extend(outD)
+    #tmpD.extend(outU)
+    #tmpR.extend(outL)
+    #
+    #return (l_mnd, l_hist, l_audiogram, tmpL, tmpU, tmpD, tmpR)
+
+
+def generate_dataset():
     gen = song_data()
     dataset = []
     try:
-        for _ in range(n):
+        while True:
             dataset.append(next(gen))
     except StopIteration:
         pass
     return dataset
 
 def huge_full_dataset():
-    #load dataset from disk (from many files into one)
-    #may need modification once I add audio data
+    #load dataset from disk (chart list)
     if os.path.exists("ddr_dataset.p"):
         print("loading dataset")
         dataset = pickle.load(open("ddr_dataset.p","rb"))
@@ -186,50 +187,116 @@ def huge_full_dataset():
     else:
         dataset = generate_dataset()
         pickle.dump(dataset, open("ddr_dataset.p","wb"))
-    in_mnd_set = []
-    in_hist_set = []
-    outL_set = []
-    outU_set = []
-    outD_set = []
-    outR_set = []
-    bag = []
-    max = len(dataset)
-    #Creates "super-batches" due to memory limitations
-    #Currently sized for ~8GB of usable memory)
-    while True:
-        if len(bag) == 0:
-            print("reloading dataset bag: size="+str(max))
-            bag = list(range(len(dataset)))
+    bag = dataset#.copy() : Don't need to copy when doing shuffle+slice rather than shuffle+pop
+    song_count = len(dataset)
+    max_iters = song_count//songs_per
+    excess = song_count%songs_per
+    #Creates "super-batches" of random songs due to memory limitations
+    with Pool(processes=7) as pool:
+        while True:
+            print("reloading dataset bag: size="+str(song_count))
             random.shuffle(bag)
-        dataID = bag.pop()
-        data = dataset[dataID]
-        (bpm, (mnd, out)) = data
-        if len(mnd) < 16:
-            print(dataID)
-            continue
-        all_data = generate_song_inout_data(mnd, out, bpm)
-        (ins, outs) = zip(*all_data)
-        (in_mnd, in_hist) = zip(*ins)
-        (outL, outU, outD, outR) = zip(*outs)
-        in_mnd_set.extend(in_mnd)
-        in_hist_set.extend(in_hist)
-        outL_set.extend(outL)
-        outU_set.extend(outU)
-        outD_set.extend(outD)
-        outR_set.extend(outR)
-        if (len(outL_set) > 400000):
-            yield ((np.array(in_mnd_set),np.array(in_hist_set)),
-                (np.array(outL_set),np.array(outU_set),np.array(outD_set),np.array(outR_set)))
-            in_mnd_set = []
-            in_hist_set = []
-            outL_set = []
-            outU_set = []
-            outD_set = []
-            outR_set = []
+            next_dataSlice = bag[0:excess] #First set is smaller
+            next_data_superbatch = pool.imap_unordered(map_data_to_training_data,next_dataSlice)
+            for x in range(max_iters+1):
+                #print(">>>DATA READY: ",next_data_superbatch.ready())
+                #data_superbatch_complete = next_data_superbatch.get()
+                in_mnd_set = []
+                in_hist_set = []
+                outL_set = []
+                outU_set = []
+                outD_set = []
+                outR_set = []
+                for data in next_data_superbatch:
+                    (in_mnd, in_hist, outL, outU, outD, outR) = data
+                    in_mnd_set.extend(in_mnd)
+                    in_hist_set.extend(in_hist)
+                    #Data augmentation check
+                    #m = len(in_hist)//4
+                    #for x in range(64,80):
+                    #    for i in range(4):
+                    #      print(in_hist[x+i*m][31][7:11])
+                    #print("----")
+                    outL_set.extend(outL)
+                    outU_set.extend(outU)
+                    outD_set.extend(outD)
+                    outR_set.extend(outR)
+                    
+                print("Data prepared (",x*songs_per+excess,"/",song_count,")")
+                in_mnd_set = np.array(in_mnd_set)
+                in_hist_set = np.array(in_hist_set)
+                outL_set = np.array(outL_set)
+                outU_set = np.array(outU_set)
+                outD_set = np.array(outD_set)
+                outR_set = np.array(outR_set)
+                print("Data sent")
+                yield ((in_mnd_set,in_hist_set),
+                    (outL_set,outU_set,outD_set,outR_set))
+                if x < max_iters:
+                    next_dataSlice = bag[x*songs_per+excess:(x+1)*songs_per+excess]
+                    next_data_superbatch = pool.imap_unordered(map_data_to_training_data,next_dataSlice)
 
-huge_gen = huge_full_dataset()
-while True: #true epoch count AKA number of songs to process
-    (ins, outs) = next(huge_gen)
-    model.fit(ins,outs,epochs=4,batch_size=512)
-    model.save("ddr_model.h5")
-    model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted
+
+
+if __name__ == '__main__':
+    import tensorflow as tf
+    from tensorflow import keras
+    from tensorflow.keras.callbacks import LambdaCallback
+    #from tensorflow.keras.models import Sequential
+    from tensorflow.keras import layers
+    from tensorflow.keras import models
+    from tensorflow.keras.layers import *
+    from tensorflow.keras.optimizers import RMSprop
+    from tensorflow.keras.models import load_model
+    model_make = True
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "LOAD":
+            print("Loading model")
+            model = load_model("ddr_model.h5")
+            #If loading from disk, maybe assume the model is reasonably-trained and use the slower but "better" SGD algorithm?
+            optimizer = keras.optimizers.Nadam()
+            if len(sys.argv) > 2:
+                if sys.argv[2] == "SGD":
+                    optimizer = keras.optimizers.SGD(learning_rate=0.001,momentum=0.9,nesterov=True)
+                if sys.argv[2] == "RMS":
+                    optimizer = RMSprop(learning_rate=0.0002)
+                if sys.argv[2] == "KEEP":
+                    optimizer = None
+            if optimizer is not None:
+                model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+            model_make = False
+    if model_make:
+        mnd_input = layers.Input(shape=(7,),name="mnd_input")
+        x = layers.Dense(32, activation='elu')(mnd_input)
+        hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,23,),name="hist_input")
+        hist_lstma = layers.LSTM(256,return_sequences=True, recurrent_dropout=0.2)(hist_input)
+        hist_lstmb = layers.LSTM(64,return_sequences=True,go_backwards=True, recurrent_dropout=0.2)(hist_input)
+        hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
+        hist_lstm = layers.LSTM(256, dropout=0.2, recurrent_dropout=0.2)(hist_lstm)
+        x = layers.concatenate([x,hist_lstm])
+        x = layers.Dense(400, activation='elu')(x)
+        x = layers.Dropout(0.3)(x)
+        x = layers.Dense(320, activation='elu')(x)
+        x = layers.Dropout(0.3)(x)
+        x = layers.Dense(256, activation='elu')(x)
+        x = layers.Dense(64, activation='elu')(x)
+        outL = layers.Dense(4, activation='softmax', name = "outL")(x)
+        outU = layers.Dense(4, activation='softmax', name = "outU")(x)
+        outD = layers.Dense(4, activation='softmax', name = "outD")(x)
+        outR = layers.Dense(4, activation='softmax', name = "outR")(x)
+
+        optimizer = keras.optimizers.Nadam()
+        model = models.Model(inputs=[mnd_input,hist_input],outputs=[outL,outU,outD,outR])
+
+        model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+    model.summary()
+    huge_gen = huge_full_dataset()
+    while True: #huge_full_dataset will keep repeating after going through all songs
+        (ins, outs) = next(huge_gen)
+        model.fit(ins,outs,epochs=1,batch_size=1024)
+        del ins
+        del outs
+        print("Saving model")
+        model.save("ddr_model.h5")
+        model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted
+        print("Save complete")
