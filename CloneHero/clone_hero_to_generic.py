@@ -4,6 +4,12 @@ import pickle as pkl
 import soundfile as sf
 import numpy as np
 
+def safeAdd(src, key, val):
+    if key in src:
+        src[key].update(val)
+    else:
+        src[key] = val
+
 source_dir = "clone_hero_data/clonehero-win64/songs"
 def main():
     for (dirpath, dirnames, filenames) in os.walk(source_dir):
@@ -45,29 +51,42 @@ def main():
                         songlength = currSong['sd'].shape[0]/samplerate
                         # yeah not dealing with 48000 right now
                         if samplerate == 44100:
-                            timestamps = currSong['ts']
+                            os.mkdir("clone_hero_data/output/"+currSongName)
+                            timestamps = list(currSong['ts'].keys())
+                            for i in range(0, len(timestamps)) : 
+                                timestamps[i] = int(timestamps[i])
+                            timestamps.sort() 
                             print(name, samplerate)
                             beatrate = 441
                             mapping = np.zeros(int(np.ceil(songlength*beatrate)))
                             currBPM = 0
                             for timestamp in timestamps:
-                                data = timestamps[timestamp]
-                                print("{}".format(data))
+                                data = currSong['ts'][str(timestamp)]
+                                #print("{}".format(data))
                                 if "B" in data:
                                     currBPM = data["B"]
+                                    print("currBPM {}".format(currBPM))
                                 
                                 time = float(timestamp)/float(currBPM) * 60 #static "60" BPM to match up to music
+                                if "N" in data:
+                                    mapping[int(np.round(time*beatrate)), int(data["N"]["v"])] = 1 
                                 #print(int(np.round(time*beatrate)))
                             for time in range(int(np.floor(songlength))):
                                 songwindow = currSong['sd'][time*samplerate:(time+1)*samplerate]
                                 mapwindow = mapping[time*beatrate:(time+1)*beatrate]
                                 
-                                with open("clone_hero_data/output/"+currSongName+".pkl", 'wb+') as f:
+                                with open("clone_hero_data/output/"+currSongName+"/"+str(time)+".pkl", 'wb+') as f:
                                     pkl.dump({'name':name, 'time':time, 'window':songwindow, 'label':mapwindow}, f)
+    
+                        for timestamp in currSong['ts']:
+                            currSong['ts'][timestamp].pop("N", None)
+                            currSong['ts'][timestamp].pop("S", None)
 
+                        for timestamp in list(currSong['ts'].keys()):
+                            if len(currSong['ts'][timestamp].keys()) == 0:
+                                currSong['ts'].pop(str(timestamp))
 
                         print("end of header for {}".format(currSongName))
-                        currSong = None
                     else:
                         (timestamp, data) = currLine.split("=")
                         timestamp = timestamp.strip()
@@ -99,21 +118,33 @@ def main():
                                 }
                             })
                 else:
-                    if any(header in currLine for header in ["[Song]"]):
-                        print("Found Song header")
-                    elif any(header in currLine for header in ["[SyncTrack]"]):
-                        n = notes.readline().strip()
-                        while n != "}":
+                    #if any(header in currLine for header in ["[Song]"]):
+                    #    print("Found Song header")
+                    if any(header in currLine for header in ["[SyncTrack]"]):
+                        notes.readline() #Skip the "{"
+
+                        print(audioFilePath)
+                        songdata, samplerate = sf.read(audioFilePath)
+                        print("sample rate: {}".format(samplerate))
+                        currSong = {
+                            'ts': {},
+                            'sd': np.asarray(songdata),
+                            'sr': samplerate
+                        }
+
+                        currLine = notes.readline().strip()
+                        while currLine != "}":
                             (timestamp, data) = currLine.split("=")
                             timestamp = timestamp.strip()
                             datums = data.strip().split(" ")
                             if datums[0] == "B":
-                                print("{}".format(datums))
+                                #print("{}".format(datums))
+                                #print(currSong)
                                 safeAdd(currSong['ts'], str(timestamp), {
                                     "B": int(datums[1].strip())
                                 })
 
-                            n = notes.readline().strip()
+                            currLine = notes.readline().strip()
                     elif any(header in currLine for header in ["[ExpertSingle]", "[HardSingle]", "[MediumSingle]", "[EasySingle]"]):
                         print("Now scanning " + currLine)
                         notes.readline() #Skip the "{"
@@ -121,22 +152,7 @@ def main():
                         mergedPathIntoName = name.replace("\\", "_")
                         currSongName = os.path.join(currLine + "_" + mergedPathIntoName)
                         print(currSongName)
-                        print(audioFilePath)
-                        data, samplerate = sf.read(audioFilePath)
-                        print("sample rate: {}".format(samplerate))
-
-                        currSong = {
-                            'ts': {},
-                            'sd': np.asarray(data),
-                            'sr': samplerate
-                        }
 
                 currLine = notes.readline().strip()
 
 main()
-
-def safeAdd(src, key, val):
-    if key in src:
-        src[key].update(val)
-    else:
-        src[key]: val
