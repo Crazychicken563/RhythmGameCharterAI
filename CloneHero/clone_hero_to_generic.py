@@ -51,33 +51,36 @@ def main():
                         songlength = currSong['sd'].shape[0]/samplerate
                         # yeah not dealing with 48000 right now
                         if samplerate == 44100:
-                            os.mkdir("clone_hero_data/output/"+currSongName)
-                            timestamps = list(currSong['ts'].keys())
-                            for i in range(0, len(timestamps)) : 
-                                timestamps[i] = int(timestamps[i])
-                            timestamps.sort() 
-                            print(name, samplerate)
-                            beatrate = 441
-                            mapping = np.zeros(int(np.ceil(songlength*beatrate)))
-                            currBPM = 0
-                            for timestamp in timestamps:
-                                data = currSong['ts'][str(timestamp)]
-                                #print("{}".format(data))
-                                if "B" in data:
-                                    currBPM = data["B"]
-                                    print("currBPM {}".format(currBPM))
-                                
-                                time = float(timestamp)/float(currBPM) * 60 #static "60" BPM to match up to music
-                                if "N" in data:
-                                    #mapping[int(np.round(time*beatrate)), data["N"]["v"]] = 1
-                                    mapping[int(np.round(time*beatrate))] = data["N"]["v"] + 1
-                                #print(int(np.round(time*beatrate)))
-                            for time in range(int(np.floor(songlength))):
-                                songwindow = currSong['sd'][time*samplerate:(time+1)*samplerate]
-                                mapwindow = mapping[time*beatrate:(time+1)*beatrate]
-                                
-                                with open("clone_hero_data/output/"+currSongName+"/"+str(time)+".pkl", 'wb+') as f:
-                                    pkl.dump({'name':name, 'time':time, 'window':songwindow, 'label':mapwindow}, f)
+                            try:
+                                os.mkdir("clone_hero_data/output/"+currSongName)
+                                timestamps = list(currSong['ts'].keys())
+                                for i in range(0, len(timestamps)) : 
+                                    timestamps[i] = int(timestamps[i])
+                                timestamps.sort() 
+                                print(name, samplerate)
+                                beatrate = 441
+                                mapping = np.zeros(int(np.ceil(songlength*beatrate)))
+                                currBPM = 0
+                                for timestamp in timestamps:
+                                    data = currSong['ts'][str(timestamp)]
+                                    #print("{}".format(data))
+                                    if "B" in data:
+                                        currBPM = data["B"]
+                                        print("currBPM {}".format(currBPM))
+                                    
+                                    time = float(timestamp)/float(currBPM) * 60 #static "60" BPM to match up to music
+                                    if "N" in data:
+                                        #mapping[int(np.round(time*beatrate)), data["N"]["v"]] = 1
+                                        mapping[int(np.round(time*beatrate))] = data["N"]["v"] + 1
+                                    #print(int(np.round(time*beatrate)))
+                                for time in range(int(np.floor(songlength))):
+                                    songwindow = currSong['sd'][time*samplerate:(time+1)*samplerate]
+                                    mapwindow = mapping[time*beatrate:(time+1)*beatrate]
+                                    
+                                    with open("clone_hero_data/output/"+currSongName+"/"+str(time)+".pkl", 'wb+') as f:
+                                        pkl.dump({'name':name, 'time':time, 'window':songwindow, 'label':mapwindow}, f)
+                            except:
+                                print("We done Fucked up :(")
     
                         for timestamp in currSong['ts']:
                             currSong['ts'][timestamp].pop("N", None)
