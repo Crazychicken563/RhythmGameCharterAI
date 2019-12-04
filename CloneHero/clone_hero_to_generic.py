@@ -69,7 +69,8 @@ def main():
                                 
                                 time = float(timestamp)/float(currBPM) * 60 #static "60" BPM to match up to music
                                 if "N" in data:
-                                    mapping[int(np.round(time*beatrate)), int(data["N"]["v"])] = 1 
+                                    #mapping[int(np.round(time*beatrate)), data["N"]["v"]] = 1
+                                    mapping[int(np.round(time*beatrate))] = data["N"]["v"] + 1
                                 #print(int(np.round(time*beatrate)))
                             for time in range(int(np.floor(songlength))):
                                 songwindow = currSong['sd'][time*samplerate:(time+1)*samplerate]
