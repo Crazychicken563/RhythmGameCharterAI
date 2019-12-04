@@ -110,7 +110,6 @@ def main2(directory):
                             label[np.floor((entry['_time'] % 1) * beatrate).astype(int)] = 1
                             with open('./samples_window/' + file.replace('.pkl','').replace('./samples/','') + str(time) + '.pkl', 'wb') as f2:
                                 pkl.dump({'name':name, 'time':entry['_time'], 'window':window, 'label':label}, f2)
-                    
 
 if __name__ == "__main__":
     directory = './samples/'
