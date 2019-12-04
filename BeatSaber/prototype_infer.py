@@ -80,62 +80,37 @@ class audio(Dataset):
     def __len__(self):
         return len(self.items)
 
-# class audio(Dataset):
-#     def __init__(self, directory):
-#         self.items = []
 
-#         files = [join(directory, f) for f in listdir(directory) if isfile(join(directory, f))]
-#         # TODO remove this, just for prototyping
-#         # files=files[:10]
-#         for file in files:
-#             self.items.append(file)
-                            
-#     def __getitem__(self, index):
-#         file = self.items[index]
-#         with open(file, 'rb') as f:
-#                 sample = pkl.load(f)
-#                 window = sample['window']
-#                 label = sample['label']
-#                 return (torch.tensor(np.expand_dims(np.sum(window, axis=1), axis=0)).float(), torch.tensor(np.expand_dims(label, axis=0)).float())
-
-#     def __len__(self):
-#         return len(self.items)
-
-
-def main(cuda=torch.cuda.is_available(), gpu=1):
+def main(cuda=torch.cuda.is_available(), gpu=0):
     device = torch.device('cuda:' + str(gpu) if cuda else "cpu")
     print(device)
-    data = audio('./samples_window')
-    print(len(data))
+    #data = audio('./samples_infer_window')
+    #print(len(data))
+    directory = './samples_infer_window'
+    files = [join(directory, f) for f in listdir(directory) if isfile(join(directory, f))]
 
-    kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
-    data_loader = torch.utils.data.DataLoader(data,batch_size=256,shuffle=True, **kwargs)
 
-    model = network().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
-    criterion = nn.MSELoss(reduction='sum')
+    model = network()#.to(device)
+    model.load_state_dict(torch.load('model0_19.pt'))
+    model.eval()
+    
+    for idx, file in enumerate(files):
+        with open(file, 'rb') as f:
+            sample = pkl.load(f)
+            window = sample['window']
+            label = sample['label']
+            data = torch.unsqueeze(torch.tensor(np.expand_dims(window, axis=0)).float(), 0)
+            #label = torch.tensor(np.expand_dims(label, axis=0)).float()
 
-    for epoch in range(11):
-        model.train()
-        for batch_idx, (data, target), in enumerate(data_loader):
-            data, target = data.to(device), target.to(device)
-            optimizer.zero_grad()
-            output = model(data)
-            loss = criterion(output, target)
-            print('Epoch', epoch, 'Batch', batch_idx, '/', len(data_loader))
-            loss.backward()
-            optimizer.step()
-        
-        test_loss = 0
-        model.eval()
-        for batch_idx, (data, target), in enumerate(data_loader):
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += criterion(output, target)
-
-        print('Epoch:', epoch, 'Loss:', test_loss)
-
-    torch.save(model.state_dict(), 'model' + str(gpu) + '.pt')
+            output = model.forward(data)
+            label = np.squeeze(output.cpu().detach().numpy(), axis=0)
+            with open('./output_infer/' + str(idx) + '.pkl', 'wb') as f:
+                #print(np.mean(label[label>0]))
+                label[label > np.mean(label[label>0])] = 1
+                label[label <= np.mean(label[label>0])] = 0
+                label[label>0] = 1
+                print(label)
+                pkl.dump({'name':file, 'time':idx, 'window':window, 'label':label}, f)
 
 if __name__ == "__main__":
-    main(cuda=True)
+    main(cuda=False)
