@@ -103,7 +103,7 @@ def main2(directory):
                 # lineLayers = []
                 # noteTypes = []
                 # cutDirections = []
-                mapping = np.zeros(int(np.ceil(songlength*beatrate)))
+                mapping = np.zeros([int(np.ceil(songlength*beatrate)), 2])
                 for entry in notes:
                     try:
                         time = entry['_time']/float(sample['BMP']) * 60 #static "60" BPM to match up to music
@@ -112,12 +112,10 @@ def main2(directory):
                         lineLayer = entry['_lineLayer'] #0-2
                         noteType = entry['_type'] #0-1 no bombs please -> remove 3 
                         cutDirection = entry['_cutDirection']
-                        print(int(np.round(time*beatrate)))
+                        #print(int(np.round(time*beatrate)))
                         if noteType <= 1:
                             mapping[int(np.round(time*beatrate)), int(noteType)] = 1 
 
-                        with open(file.replace('samples', 'samples_new'), 'wb') as f2:
-                            pkl.dump({'name':name, 'songdata':data, 'mapping':mapping}, f2)
                         # cutDirections.append(cutDirection)
                         # lineIndexs.append(lineIndex)
                         # lineLayers.append(lineLayer)
@@ -127,7 +125,11 @@ def main2(directory):
                         # here is where you add it to the numpy array
                     except:
                         print('NaN')
-
+                for time in range(int(np.floor(songlength))):
+                    songwindow = data[time*samplerate:(time+1)*samplerate,:]
+                    mapwindow = mapping[time*beatrate:(time+1)*beatrate,:]
+                    with open('./samples_window/' + file.replace('.pkl','').replace('./samples/','') + str(time) + '.pkl', 'wb') as f2:
+                        pkl.dump({'name':name, 'time':time, 'window':songwindow, 'label':mapwindow}, f2)
         print(file)
                     
                     
