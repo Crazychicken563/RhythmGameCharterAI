@@ -13,6 +13,8 @@ excludes = [
 ]
 #ITG and DDR rating scales are close enough to ignore the difference
 #Note that ITG 1/2 are the only official ones. 3, Rebirth, Rebirth+, Rebirth 2 are all fan-made
+#ITG Rebirth+/"True To Form" and "Cry Die" have weird ogg files, manually corrected length via load into VLC -> Save
+
 
 danceTypesFound = set()
 songCount = 0
@@ -54,11 +56,17 @@ for (dirpath, dirnames, filenames) in os.walk(source_dir):
             if len(line) == 0:
                 break
             if "#BPMS" in line:
-                if "," in line:
-                    skip = "Multiple BPMs detected"
-                else:
-                    bpmregex = re.search(r"=(\d+\.?\d*)", line)
-                    BPM = bpmregex.group(1)#Note that negative BPMs can exist, but are weird
+                END_BPM_SEARCH = False
+                BPM = ""
+                bpmregex = re.search(r":(.*)", line)
+                line_bpm = bpmregex.group(1)#Note that negative BPMs can exist, but are weird
+                while True:
+                    BPM += line_bpm
+                    if "-" in line_bpm:
+                        skip = "Negative BPM"
+                    if ";" in line_bpm:
+                        break;
+                    line_bpm = chart.readline().strip();
             if "#OFFSET" in line:
                 offsetregex = re.search(r":(-?\d+\.?\d*)", line)
                 OFFSET = offsetregex.group(1)
@@ -93,10 +101,10 @@ for (dirpath, dirnames, filenames) in os.walk(source_dir):
     newpath = os.path.join("ddr_data",name)
     os.makedirs(newpath, exist_ok=True)
     with open(os.path.join(newpath,"chart_data.dat"), mode='w', encoding="utf-8") as chart_data:
-        chart_data.write("CHART="+os.path.join(dirpath, chartname)+"\n")
-        chart_data.write("MUSIC="+os.path.join(dirpath, musicname)+"\n")
-        chart_data.write("BPM="+BPM+"\n")
-        chart_data.write("OFFSET="+OFFSET+"\n")
+        chart_data.write("CHART:"+os.path.join(dirpath, chartname)+"\n")
+        chart_data.write("MUSIC:"+os.path.join(dirpath, musicname)+"\n")
+        chart_data.write("BPM:"+BPM+"\n")
+        chart_data.write("OFFSET:"+OFFSET+"\n")
         for t in typeList:
             chart_data.write(t[0]+"@"+str(t[1])+"\n")
 for t in danceTypesFound:

@@ -19,7 +19,7 @@ if len(sys.argv) > 1:
 else:
   path = "../preprocessing/ddr_data/In The Groove/Anubis/c8_520.mnd"
 
-np.set_printoptions(precision=4,suppress=True)
+np.set_printoptions(precision=4,suppress=True, floatmode="fixed")
 
 
 raw_data = []

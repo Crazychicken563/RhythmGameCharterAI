@@ -1,6 +1,6 @@
 import librosa
 import numpy as np
-LSTM_HISTORY_LENGTH = 48
+LSTM_HISTORY_LENGTH = 64
 SAMPLE_RATE = 44100
 BIN_COUNT = 84
 AUDIO_HOP_LENGTH = 512 #the default

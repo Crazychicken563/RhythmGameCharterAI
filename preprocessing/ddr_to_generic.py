@@ -30,10 +30,10 @@ def main():
             print("Chart data not found! "+name)
             continue
         with open(os.path.join(dirpath, "chart_data.dat"), encoding="utf-8") as chart_data:
-            (a, chart_path) = chart_data.readline().strip().split("=")
-            (b, music_path) = chart_data.readline().strip().split("=")
-            (c, bpm)        = chart_data.readline().strip().split("=")
-            (d, offset)     = chart_data.readline().strip().split("=")
+            (a, chart_path) = chart_data.readline().strip().split(":",1)
+            (b, music_path) = chart_data.readline().strip().split(":",1)
+            (c, bpm)        = chart_data.readline().strip().strip(";").split(":")
+            (d, offset)     = chart_data.readline().strip().split(":")
             assert (a, b, c, d) == ("CHART", "MUSIC", "BPM", "OFFSET")
             with open(chart_path, encoding="latin-1") as chart:
                 while True:
@@ -52,6 +52,7 @@ def main():
                         mnd.write(offset+"\n")
                         success = write_mnd_data(chart, mnd)
                     if not success:
+                        print(this_difficulty_file)
                         os.remove(this_difficulty_file)
 
 
@@ -60,6 +61,7 @@ def write_mnd_data(chart, mnd):
     #assumes mnd has had header lines written
     #returns if it was successful
     time_point = 0
+    lines_written = 0
     stored_lines = []
     while True:
         line = chart.readline()
@@ -82,12 +84,16 @@ def write_mnd_data(chart, mnd):
                 end_long = notes.count("3")
                 if (note or start_long or end_long):
                     mnd.write(f"{time_point} {note} {start_long} {end_long}\n")
+                    lines_written += 1
                 time_point += time_resolution
             stored_lines = []
         else:
             if len(line) == 4:
                 stored_lines.append(line)
         if ";" in line:
+            if lines_written < 20:
+                print("Chart too small!")
+                return False
             return True
 
 main()

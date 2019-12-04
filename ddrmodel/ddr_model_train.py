@@ -5,6 +5,7 @@ import random
 import sys
 import io
 import pickle
+import math
 from shared_ddr_processing import *
 import multiprocessing
 from multiprocessing import Pool
@@ -13,7 +14,7 @@ from multiprocessing import Pool
 #Current input is the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4, MND data for both past arrows and the new step, and a very small amount of audio data around the new step
 #start of song data has a ton of 0 (except for BPM)
 source_dir = "../preprocessing/ddr_data"
-songs_per = 1000
+songs_per = 1024
 
 #Returns a list of charts to be used later (this is cached in ddr_dataset.p)
 def song_data(skipto = ""):
@@ -34,10 +35,10 @@ def song_data(skipto = ""):
             print("Chart data not found! "+name)
             continue
         with open(os.path.join(dirpath, "chart_data.dat"), encoding="utf-8") as chart_data:
-            (a, chart_path) = chart_data.readline().strip().split("=")
-            (b, music_path) = chart_data.readline().strip().split("=")
-            (c, bpm)        = chart_data.readline().strip().split("=")
-            (d, offset)     = chart_data.readline().strip().split("=")
+            (a, chart_path) = chart_data.readline().strip().split(":",1)
+            (b, music_path) = chart_data.readline().strip().split(":",1)
+            (c, bpm)        = chart_data.readline().strip().strip(";").split(":")
+            (d, offset)     = chart_data.readline().strip().split(":")
             assert (a, b, c, d) == ("CHART", "MUSIC", "BPM", "OFFSET")
             with open(chart_path, encoding="latin-1") as chart:
                 while True:
@@ -48,7 +49,7 @@ def song_data(skipto = ""):
                     difficulty = difficulty.strip(":")
                     this_difficulty_file = os.path.join(dirpath,"c"+str(difficulty)+"_"+position+".mnd")
                     if os.path.exists(this_difficulty_file):
-                        yield (float(bpm),float(offset),int(position),dirpath,chart_path,music_path)
+                        yield (bpm,float(offset),int(position),dirpath,chart_path,music_path)
 
 
 def mnd_getdata(chart):
@@ -89,30 +90,80 @@ def mnd_getdata(chart):
                 stored_lines.append(line)
         if ";" in line:
             return (mnd_data, output)
-
+def bpm_split(text):
+    x = text.split("=")
+    assert (len(x) == 2)
+    return (float(x[0]),float(x[1]))
 #Generator for all of the data involved in a single run of the network
 def generate_song_inout_data(data_tuple):
-    (bpm, offset, position, dirpath, chart_path, music_path) = data_tuple
+    (bpm_data, offset, position, dirpath, chart_path, music_path) = data_tuple
+    bpm_text = bpm_data.split(",")
+    bpm_list = list(map(bpm_split,bpm_text))
+    bpm_list.append((float("inf"),0))
     with open(chart_path, encoding="latin-1") as chart:
         chart.seek(position)
         (mnd_arr, out_arr) = mnd_getdata(chart)
     assert(len(mnd_arr) == len(out_arr))
     assert(len(mnd_arr) > 10)
+    
+    weight = 20/math.sqrt(max(len(mnd_arr),100)) #lengths vary from ~100 low, ~300 average, ~1500 max
     inputs = []
     fulldata = []
-    blank_input = np.array([0, 0, 0, 0, 0, 0, bpm, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])
+    blank_input = np.zeros(25) #9 mnd data, 16 step history
     for i in range(LSTM_HISTORY_LENGTH):
         inputs.append(blank_input)
-    last_time = 0
+
+    bpm_id = 0
+    bpm = bpm_list[bpm_id][1]
+    next_bpm_time = bpm_list[bpm_id+1][0]*48
+    
+    now_sec = -offset
+    next_sec = now_sec
+    next_beat = mnd_arr[0][0]
+    now_beat = 0
+    
+    for i in range(len(bpm_list)-1):
+        assert(bpm_list[i][1] > 0)
+        if bpm_list[i][0] > bpm_list[i+1][0]:
+            print(chart_path,bpm_data,bpm_list)
+            print(i,bpm_list[i][0],bpm_list[i+1][0])
+        assert(bpm_list[i][0] <= bpm_list[i+1][0])
+    assert(bpm_list[0][0] == 0.0)
+    minilast_beat = 0
+    while next_beat > next_bpm_time:
+      assert(minilast_beat <= next_bpm_time)
+      next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
+      minilast_beat = next_bpm_time
+      bpm_id += 1
+      bpm = bpm_list[bpm_id][1]
+      next_bpm_time = bpm_list[bpm_id+1][0]*48
+    next_sec = (next_beat-minilast_beat)/(bpm/60*48)
+
     for pos in range(len(mnd_arr)):
+        last_beat = now_beat
         i = pos+LSTM_HISTORY_LENGTH
-        (time_point, note, start_long, end_long) = mnd_arr[pos]
-        beat_fract = beat_find(time_point)
-        next_time = mnd_arr[pos+1][0] if i+1 < len(mnd_arr) else time_point+(192*5)
-        mnd_data = [(time_point-last_time)/(192*5), (next_time-time_point)/(192*5), beat_fract/48, note/4, start_long/4, end_long/4, bpm/400]
-        #array: [Time from last to current, time from current to next, beat fraction, basic press count, freeze start count, freeze end count, bpm]
+        (now_beat, note, start_long, end_long) = mnd_arr[pos]
+        assert(now_beat == next_beat)
+        minilast_beat = now_beat
+        last_sec = now_sec
+        now_sec = next_sec
+        next_beat = mnd_arr[pos+1][0] if pos+1 < len(mnd_arr) else now_beat+(192*5)
+        while next_beat > next_bpm_time:
+          assert(minilast_beat <= next_bpm_time)
+          next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
+          minilast_beat = next_bpm_time
+          bpm_id += 1
+          bpm = bpm_list[bpm_id][1]
+          next_bpm_time = bpm_list[bpm_id+1][0]*48
+        next_sec += (next_beat-minilast_beat)/(bpm/60*48)
+        beat_fract = beat_find(now_beat)
+        mnd_data = [min(now_sec-last_sec,5)/5, min(next_sec-now_sec,5)/5,
+                    min((now_beat-last_beat)/192,1), min((next_beat-now_beat)/192,1),
+                    beat_fract/48, note/3, start_long/3, end_long/3, bpm/400]
+        #array: [Seconds prev to now, Seconds from now to next, beats prev to now, beats now to next,
+        #      beat fraction, basic press count, freeze start count, freeze end count, bpm]
         #Plus the Left/Up/Down/Right arrows' data (one-hot for output but just data/3 for input)
-        last_time = time_point
+        
         input_mnd_aux = mnd_data.copy()
         mnd_data.extend(np.ravel(out_arr[pos]))
         inputs.append(np.array(mnd_data))
@@ -120,52 +171,22 @@ def generate_song_inout_data(data_tuple):
         out_dat = np.array(out_arr[pos])
         
         #potentially data augmentation: flip L/R, U/D, and both
-        yield ((input_mnd_aux, in_arr), out_dat)
+        #print (input_mnd_aux,last_beat,now_beat,next_beat,next_bpm_time,last_sec,now_sec,next_sec)
+        yield (input_mnd_aux, in_arr, out_dat[0],out_dat[1],out_dat[2],out_dat[3],weight)
 
 #Take in a song_data tuple and return a full set of training data
 def map_data_to_training_data(data_tuple):
     all_data = generate_song_inout_data(data_tuple)
     try:
-        (ins, outs) = zip(*all_data)
+        zipped_data = zip(*all_data)
+        return zipped_data
     except ValueError:
         print("BAD DATA: ",data_tuple[3])
         return ([],[],[],[],[],[],[])
     (in_mnd, in_hist) = zip(*ins)
     (outL, outU, outD, outR) = zip(*outs)
     #disable data augmentation to get more unique songs in memory
-    return (in_mnd, in_hist, outL, outU, outD, outR)
-    #data augmentation: flip LR, then flip UD for 4x data
-    #l_mnd = list(in_mnd)*4
-    #l_audiogram = list(in_audiogram)*4
-    #
-    #l_hist = list(in_hist)
-    #tmp_hist = np.array(l_hist)
-    #tmp_hist[:,:,[7,10]] = tmp_hist[:,:,[10,7]]
-    #l_hist.extend(tmp_hist)
-    #tmp2_hist = np.array(l_hist)
-    #tmp2_hist[:,:,[8,9]] = tmp2_hist[:,:,[9,8]]
-    #l_hist.extend(tmp2_hist)
-    #
-    #tmpL = list(outL)
-    #tmpU = list(outU)
-    #tmpD = list(outD)
-    #tmpR = list(outR)
-    #tmpL.extend(outR)
-    #tmpU.extend(outU)
-    #tmpD.extend(outD)
-    #tmpR.extend(outL)
-    #
-    #tmpL.extend(outL)
-    #tmpU.extend(outD)
-    #tmpD.extend(outU)
-    #tmpR.extend(outR)
-    #
-    #tmpL.extend(outR)
-    #tmpU.extend(outD)
-    #tmpD.extend(outU)
-    #tmpR.extend(outL)
-    #
-    #return (l_mnd, l_hist, l_audiogram, tmpL, tmpU, tmpD, tmpR)
+    return (in_mnd, in_hist, outL, outU, outD, outR, weights)
 
 
 def generate_dataset():
@@ -199,7 +220,8 @@ def huge_full_dataset():
             next_dataSlice = bag[0:excess] #First set is smaller
             next_data_superbatch = pool.imap_unordered(map_data_to_training_data,next_dataSlice)
             for x in range(max_iters+1):
-                #print(">>>DATA READY: ",next_data_superbatch.ready())
+                #if not next_data_superbatch.ready():
+                #    print(">>>DATA NOT READY!")
                 #data_superbatch_complete = next_data_superbatch.get()
                 in_mnd_set = []
                 in_hist_set = []
@@ -207,8 +229,9 @@ def huge_full_dataset():
                 outU_set = []
                 outD_set = []
                 outR_set = []
+                weights_set = []
                 for data in next_data_superbatch:
-                    (in_mnd, in_hist, outL, outU, outD, outR) = data
+                    (in_mnd, in_hist, outL, outU, outD, outR, weights) = data
                     in_mnd_set.extend(in_mnd)
                     in_hist_set.extend(in_hist)
                     #Data augmentation check
@@ -221,6 +244,7 @@ def huge_full_dataset():
                     outU_set.extend(outU)
                     outD_set.extend(outD)
                     outR_set.extend(outR)
+                    weights_set.extend(weights)
                     
                 print("Data prepared (",x*songs_per+excess,"/",song_count,")")
                 in_mnd_set = np.array(in_mnd_set)
@@ -229,9 +253,10 @@ def huge_full_dataset():
                 outU_set = np.array(outU_set)
                 outD_set = np.array(outD_set)
                 outR_set = np.array(outR_set)
+                weights_set = np.array(weights_set)
                 print("Data sent")
                 yield ((in_mnd_set,in_hist_set),
-                    (outL_set,outU_set,outD_set,outR_set))
+                    (outL_set,outU_set,outD_set,outR_set),weights_set)
                 if x < max_iters:
                     next_dataSlice = bag[x*songs_per+excess:(x+1)*songs_per+excess]
                     next_data_superbatch = pool.imap_unordered(map_data_to_training_data,next_dataSlice)
@@ -266,18 +291,26 @@ if __name__ == '__main__':
                 model.compile(loss='categorical_crossentropy', optimizer=optimizer)
             model_make = False
     if model_make:
-        mnd_input = layers.Input(shape=(7,),name="mnd_input")
-        x = layers.Dense(32, activation='elu')(mnd_input)
-        hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,23,),name="hist_input")
-        hist_lstma = layers.LSTM(256,return_sequences=True, recurrent_dropout=0.2)(hist_input)
-        hist_lstmb = layers.LSTM(64,return_sequences=True,go_backwards=True, recurrent_dropout=0.2)(hist_input)
+        hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,25,),name="hist_input")
+        hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_input)
+        hist_lstma = layers.LSTM(256,return_sequences=True)(hist_lstm)
+        hist_lstmb = layers.LSTM(64,return_sequences=True,go_backwards=True)(hist_lstm)
         hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
-        hist_lstm = layers.LSTM(256, dropout=0.2, recurrent_dropout=0.2)(hist_lstm)
+        hist_lstma = layers.LSTM(256,return_sequences=True)(hist_lstm)
+        hist_lstmb = layers.LSTM(32,return_sequences=True,go_backwards=True)(hist_lstm)
+        hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
+        hist_lstm = layers.LSTM(256,return_sequences=True)(hist_lstm)
+        hist_lstm = layers.LSTM(256)(hist_lstm)
+        
+        mnd_input = layers.Input(shape=(9,),name="mnd_input")
+        x = layers.Dense(32, activation='elu')(mnd_input)
         x = layers.concatenate([x,hist_lstm])
-        x = layers.Dense(400, activation='elu')(x)
-        x = layers.Dropout(0.3)(x)
-        x = layers.Dense(320, activation='elu')(x)
-        x = layers.Dropout(0.3)(x)
+        x = layers.Dense(512, activation='elu')(x)
+        x = layers.Dense(512, activation='elu')(x)
+        x = layers.Dense(384, activation='elu')(x)
+        x = layers.Dense(256, activation='elu')(x)
+        x = layers.Dense(256, activation='elu')(x)
+        x = layers.Dense(256, activation='elu')(x)
         x = layers.Dense(256, activation='elu')(x)
         x = layers.Dense(64, activation='elu')(x)
         outL = layers.Dense(4, activation='softmax', name = "outL")(x)
@@ -292,11 +325,13 @@ if __name__ == '__main__':
     model.summary()
     huge_gen = huge_full_dataset()
     while True: #huge_full_dataset will keep repeating after going through all songs
-        (ins, outs) = next(huge_gen)
-        model.fit(ins,outs,epochs=1,batch_size=1024)
+        (ins, outs, weights) = next(huge_gen)
+        model.fit(ins,outs,batch_size=512,sample_weight=list([weights,weights,weights,weights]))
         del ins
         del outs
+        del weights
         print("Saving model")
+        os.remove("ddr_modelBACKUP.h5")
+        os.rename("ddr_model.h5","ddr_modelBACKUP.h5")
         model.save("ddr_model.h5")
-        model.save("ddr_modelBACKUP.h5")#save twice so that if you do an interrupt, one is not corrupted
         print("Save complete")
