@@ -14,7 +14,7 @@ from multiprocessing import Pool
 #Current input is the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4, MND data for both past arrows and the new step, and a very small amount of audio data around the new step
 #start of song data has a ton of 0 (except for BPM)
 source_dir = "../preprocessing/ddr_data"
-songs_per = 128
+songs_per = 1024
 
 #Returns a list of charts to be used later (this is cached in ddr_dataset.p)
 def song_data(skipto = ""):
@@ -52,7 +52,7 @@ def song_data(skipto = ""):
                         yield (bpm,float(offset),int(position),dirpath,chart_path,music_path)
 
 
-def mnd_getdata(chart):
+def mnd_getdata(chart, flipLR=False, flipUD=False):
     #Assumes chart is valid and was seek()'d to already
     time_point = 0
     stored_lines = []
@@ -79,6 +79,10 @@ def mnd_getdata(chart):
                 if (note or start_long or end_long):
                     notes = notes.replace("M","0").replace("4","2").replace("K","0").replace("L","0").replace("F","0")
                     tmp = list(map(lambda x: np.eye(4)[int(x)],notes)) #to_categorical hack 
+                    if flipLR:
+                        tmp = [tmp[3],tmp[1],tmp[2],tmp[0]]
+                    if flipUD:
+                        tmp = [tmp[0],tmp[2],tmp[1],tmp[3]]
                     #https://stackoverflow.com/questions/49684379/numpy-equivalent-to-keras-function-utils-to-categorical
                     output.append(tmp)
                     mnd_data.append((time_point, note, start_long, end_long))
@@ -90,16 +94,10 @@ def mnd_getdata(chart):
                 stored_lines.append(line)
         if ";" in line:
             return (mnd_data, output)
-def bpm_split(text):
-    x = text.split("=")
-    assert (len(x) == 2)
-    return (float(x[0]),float(x[1]))
 #Generator for all of the data involved in a single run of the network
 def generate_song_inout_data(data_tuple):
     (bpm_data, offset, position, dirpath, chart_path, music_path) = data_tuple
-    bpm_text = bpm_data.split(",")
-    bpm_list = list(map(bpm_split,bpm_text))
-    bpm_list.append((float("inf"),0))
+    bpm_list = process_bpm(bpm_data)
     with open(chart_path, encoding="latin-1") as chart:
         chart.seek(position)
         (mnd_arr, out_arr) = mnd_getdata(chart)
@@ -131,12 +129,12 @@ def generate_song_inout_data(data_tuple):
     assert(bpm_list[0][0] == 0.0)
     minilast_beat = 0
     while next_beat > next_bpm_time:
-      assert(minilast_beat <= next_bpm_time)
-      next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
-      minilast_beat = next_bpm_time
-      bpm_id += 1
-      bpm = bpm_list[bpm_id][1]
-      next_bpm_time = bpm_list[bpm_id+1][0]*48
+        assert(minilast_beat <= next_bpm_time)
+        next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
+        minilast_beat = next_bpm_time
+        bpm_id += 1
+        bpm = bpm_list[bpm_id][1]
+        next_bpm_time = bpm_list[bpm_id+1][0]*48
     next_sec = (next_beat-minilast_beat)/(bpm/60*48)
 
     for pos in range(len(mnd_arr)):
@@ -149,21 +147,21 @@ def generate_song_inout_data(data_tuple):
         now_sec = next_sec
         next_beat = mnd_arr[pos+1][0] if pos+1 < len(mnd_arr) else now_beat+(192*5)
         while next_beat > next_bpm_time:
-          assert(minilast_beat <= next_bpm_time)
-          next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
-          minilast_beat = next_bpm_time
-          bpm_id += 1
-          bpm = bpm_list[bpm_id][1]
-          next_bpm_time = bpm_list[bpm_id+1][0]*48
+            assert(minilast_beat <= next_bpm_time)
+            next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
+            minilast_beat = next_bpm_time
+            bpm_id += 1
+            bpm = bpm_list[bpm_id][1]
+            next_bpm_time = bpm_list[bpm_id+1][0]*48
         next_sec += (next_beat-minilast_beat)/(bpm/60*48)
         beat_fract = beat_find(now_beat)
         assert(next_sec > now_sec)
-        mnd_data = [min(now_sec-last_sec,5)/5, min(next_sec-now_sec,5)/5,
+        mnd_data = [min(now_sec-last_sec,2)/2, min(next_sec-now_sec,2)/2,
                     min((now_beat-last_beat)/384,1), min((next_beat-now_beat)/384,1),
-                    beat_fract/48, note/3, start_long/3, end_long/3, bpm/400]
+                    beat_fract/48, note/3, start_long/3, end_long/3, min(bpm/400,1)]
         #array: [Seconds prev to now, Seconds from now to next, beats prev to now, beats now to next,
         #      beat fraction, basic press count, freeze start count, freeze end count, bpm]
-        #Plus the Left/Up/Down/Right arrows' data (one-hot for output but just data/3 for input)
+        #Plus the Left/Up/Down/Right arrows' data (one-hot x4 for input and output)
         
         input_mnd_aux = mnd_data.copy()
         mnd_data.extend(np.ravel(out_arr[pos]))
@@ -171,8 +169,6 @@ def generate_song_inout_data(data_tuple):
         in_arr = np.array(inputs[pos:i])
         out_dat = np.array(out_arr[pos])
         
-        #potentially data augmentation: flip L/R, U/D, and both
-        #print (input_mnd_aux,last_beat,now_beat,next_beat,next_bpm_time,last_sec,now_sec,next_sec)
         yield (input_mnd_aux, in_arr, out_dat[0],out_dat[1],out_dat[2],out_dat[3],weight)
 
 #Take in a song_data tuple and return a full set of training data
@@ -293,25 +289,17 @@ if __name__ == '__main__':
     if model_make:
         hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,25,),name="hist_input")
         hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_input)
-        hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_input)
+        hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_lstm)
         hist_lstma = layers.LSTM(256,return_sequences=True)(hist_lstm)
         hist_lstmb = layers.LSTM(64,return_sequences=True,go_backwards=True)(hist_lstm)
         hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
-        hist_lstma = layers.LSTM(256,return_sequences=True)(hist_lstm)
-        hist_lstmb = layers.LSTM(32,return_sequences=True,go_backwards=True)(hist_lstm)
-        hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
-        hist_lstm = layers.LSTM(256,return_sequences=True)(hist_lstm)
         hist_lstm = layers.LSTM(256)(hist_lstm)
-        
         mnd_input = layers.Input(shape=(9,),name="mnd_input")
         x = layers.Dense(32, activation='elu')(mnd_input)
-        x = layers.Dense(32, activation='elu')(mnd_input)
+        x = layers.Dense(32, activation='elu')(x)
         x = layers.concatenate([x,hist_lstm])
-        x = layers.Dense(512, activation='elu')(x)
-        x = layers.Dense(512, activation='elu')(x)
-        x = layers.Dense(384, activation='elu')(x)
-        x = layers.Dense(256, activation='elu')(x)
-        x = layers.Dense(256, activation='elu')(x)
+        x = layers.Dense(400, activation='elu')(x)
+        x = layers.Dense(320, activation='elu')(x)
         x = layers.Dense(256, activation='elu')(x)
         x = layers.Dense(256, activation='elu')(x)
         x = layers.Dense(64, activation='elu')(x)

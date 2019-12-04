@@ -22,3 +22,16 @@ def load_song(filename):
 
 def convert_full_audio(song):
     return np.transpose(librosa.core.hybrid_cqt(song, sr=SAMPLE_RATE, hop_length=AUDIO_HOP_LENGTH, n_bins=BIN_COUNT))
+
+
+
+
+def bpm_split(text):
+    x = text.split("=")
+    assert (len(x) == 2)
+    return (float(x[0]),float(x[1]))
+def process_bpm(data_in):
+  bpm_text = data_in.split(",")
+  bpm_list = list(map(bpm_split,bpm_text))
+  bpm_list.append((float("inf"),0))
+  return bpm_list

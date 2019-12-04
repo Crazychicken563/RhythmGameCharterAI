@@ -25,41 +25,77 @@ np.set_printoptions(precision=4,suppress=True, floatmode="fixed")
 raw_data = []
 with open(path, mode='r', encoding="utf-8") as generic:
     songpath = generic.readline()
-    bpm = float(generic.readline())
-    offset = generic.readline()
+    bpm_data = generic.readline()
+    offset = float(generic.readline())
     for line in generic:
         line_data = line.split()
         raw_data.append(tuple(int(x) for x in line_data))
 jumps = 0
 lrjumps = 0
 udjumps = 0
+
+bpm_list = process_bpm(bpm_data)
 timepoints = []
-history = [np.array([0, 0, 0, 0, 0, 0, bpm, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])]*LSTM_HISTORY_LENGTH
+blank_input = np.zeros(25) #9 mnd data, 16 step history
+history = [blank_input]*LSTM_HISTORY_LENGTH
+bpm_id = 0
+bpm = bpm_list[bpm_id][1]
+next_bpm_time = bpm_list[bpm_id+1][0]*48
+
+now_sec = -offset
+next_sec = now_sec
+next_beat = raw_data[0][0]
+now_beat = 0
+minilast_beat = 0
+while next_beat > next_bpm_time:
+    assert(minilast_beat <= next_bpm_time)
+    next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
+    minilast_beat = next_bpm_time
+    bpm_id += 1
+    bpm = bpm_list[bpm_id][1]
+    next_bpm_time = bpm_list[bpm_id+1][0]*48
+next_sec = (next_beat-minilast_beat)/(bpm/60*48)
+
+
 notehistory = []
-last_time = 0
 for i in range(len(raw_data)):
-    (time_point, note, start_long, end_long) = raw_data[i]
-    next_time = raw_data[i+1][0] if i+1 < len(raw_data) else time_point+(192*5)
-    beat_fract = beat_find(time_point)
-    mnd_in = [(time_point-last_time)/(192*5), (next_time-time_point)/(192*5), beat_fract/48, note/4, start_long/4, end_long/4, bpm/400]
+    (now_beat, note, start_long, end_long) = raw_data[i]
+    last_beat = now_beat
+    minilast_beat = now_beat
+    last_sec = now_sec
+    now_sec = next_sec
+    next_beat = raw_data[i+1][0] if i+1 < len(raw_data) else now_beat+(192*5)
+    while next_beat > next_bpm_time:
+        assert(minilast_beat <= next_bpm_time)
+        next_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
+        minilast_beat = next_bpm_time
+        bpm_id += 1
+        bpm = bpm_list[bpm_id][1]
+        next_bpm_time = bpm_list[bpm_id+1][0]*48
+    next_sec += (next_beat-minilast_beat)/(bpm/60*48)
+    beat_fract = beat_find(now_beat)
+    mnd_in = [min(now_sec-last_sec,2)/2, min(next_sec-now_sec,2)/2,
+                min((now_beat-last_beat)/384,1), min((next_beat-now_beat)/384,1),
+                beat_fract/48, note/3, start_long/3, end_long/3, min(bpm/400,1)]
     parsed_mnd_in = np.array(mnd_in,dtype="float32",ndmin=2)
-    last_time = time_point
     hs = len(history)
     hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
+    
     probs = model.predict([np.array(parsed_mnd_in),hist_in])
+    
     (l,u,d,r) = (x[0].astype('float') for x in probs)
     available = {'l':l,'u':u,'d':d,'r':r}
     out = {'l':0,'u':0,'d':0,'r':0}
     for i, r in ((3, end_long),(2, start_long),(1, note)):
       for _ in range(r):
-          pop = []
-          weights = []
-          for k, v in available.items():
-              pop.append(k)
-              weights.append(pow(v[i],2))
-          chosen = random.choices(pop, weights)[0]
-          out[chosen] = i
-          del available[chosen]
+        best_v = 0
+        for k, v in available.items():
+          sample_v = v[i]*random.uniform(0.5,1)
+          if sample_v > best_v:
+            best_k = k
+            best_v = sample_v
+        out[best_k] = i
+        del available[best_k]
     (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
     #print([L,U,D,R],mnd_in)
     print([L,U,D,R],list(x[0].astype('float') for x in probs))
@@ -67,7 +103,7 @@ for i in range(len(raw_data)):
     mnd_in.extend(np.ravel(tmp))
     history.append(mnd_in)
     notehistory.append([L,U,D,R])
-    timepoints.append(time_point)
+    timepoints.append(now_beat)
     if (note+start_long == 2):
         jumps += 1
         if (U>0 and D>0):
