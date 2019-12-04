@@ -41,8 +41,31 @@ def main():
                 if scanningHeader:
                     if currLine == "}":
                         scanningHeader = False
-                        with open("clone_hero_data/output/"+currSongName+".pkl", 'wb+') as f:
-                            pkl.dump(currSong, f)
+                        samplerate = currSong['sr']
+                        songlength = currSong['sd'].shape[0]/samplerate
+                        # yeah not dealing with 48000 right now
+                        if samplerate == 44100:
+                            timestamps = currSong['ts']
+                            print(name, samplerate)
+                            beatrate = 441
+                            mapping = np.zeros(int(np.ceil(songlength*beatrate)))
+                            currBPM = 0
+                            for timestamp in timestamps:
+                                data = timestamps[timestamp]
+                                print("{}".format(data))
+                                if "B" in data:
+                                    currBPM = data["B"]
+                                
+                                time = float(timestamp)/float(currBPM) * 60 #static "60" BPM to match up to music
+                                #print(int(np.round(time*beatrate)))
+                            for time in range(int(np.floor(songlength))):
+                                songwindow = currSong['sd'][time*samplerate:(time+1)*samplerate]
+                                mapwindow = mapping[time*beatrate:(time+1)*beatrate]
+                                
+                                with open("clone_hero_data/output/"+currSongName+".pkl", 'wb+') as f:
+                                    pkl.dump({'name':name, 'time':time, 'window':songwindow, 'label':mapwindow}, f)
+
+
                         print("end of header for {}".format(currSongName))
                         currSong = None
                     else:
@@ -56,10 +79,11 @@ def main():
                             if value <= 4:
                                 # mnd will always be defined by this point since scanningHeader
                                 # can never be true without mnd being instantiated
-                                currSong['n'].append({
-                                    't': int(timestamp),
-                                    'v': value,
-                                    'd': int(duration)
+                                safeAdd(currSong['ts'], str(timestamp), {
+                                    "N": {
+                                        'v': value,
+                                        'd': int(duration)
+                                    }
                                 })
                             #else:
                                 #print("Unknown value note {}".format(datums))
@@ -68,20 +92,26 @@ def main():
                             # augment 7 means that the previous note has star power.
                             # other augments currently unknown...
                             #print("star power for duration: {}".format(duration))
-                            currSong['s'].append({
-                                't': int(timestamp),
-                                'v': 2,
-                                'd': int(duration)
+                            safeAdd(currSong['ts'], str(timestamp), {
+                                "S": {
+                                    'v': 2,
+                                    'd': int(duration)
+                                }
                             })
                 else:
                     if any(header in currLine for header in ["[Song]"]):
+                        print("Found Song header")
+                    elif any(header in currLine for header in ["[SyncTrack]"]):
                         n = notes.readline().strip()
                         while n != "}":
-                            data = n.split("=")
-                            print("{}".format(data))
-                            if data[0].strip() == "MusicStream":
-                                audioFile = data[1].strip().replace("\"", "")
-                                print("AudioFile: {}".format(audioFile))
+                            (timestamp, data) = currLine.split("=")
+                            timestamp = timestamp.strip()
+                            datums = data.strip().split(" ")
+                            if datums[0] == "B":
+                                print("{}".format(datums))
+                                safeAdd(currSong['ts'], str(timestamp), {
+                                    "B": int(datums[1].strip())
+                                })
 
                             n = notes.readline().strip()
                     elif any(header in currLine for header in ["[ExpertSingle]", "[HardSingle]", "[MediumSingle]", "[EasySingle]"]):
@@ -96,8 +126,7 @@ def main():
                         print("sample rate: {}".format(samplerate))
 
                         currSong = {
-                            'n': [],
-                            's': [],
+                            'ts': {},
                             'sd': np.asarray(data),
                             'sr': samplerate
                         }
@@ -105,3 +134,9 @@ def main():
                 currLine = notes.readline().strip()
 
 main()
+
+def safeAdd(src, key, val):
+    if key in src:
+        src[key].update(val)
+    else:
+        src[key]: val
