@@ -14,7 +14,7 @@ from multiprocessing import Pool
 #Current input is the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4, MND data for both past arrows and the new step, and a very small amount of audio data around the new step
 #start of song data has a ton of 0 (except for BPM)
 source_dir = "../preprocessing/ddr_data"
-songs_per = 1024
+songs_per = 128
 
 #Returns a list of charts to be used later (this is cached in ddr_dataset.p)
 def song_data(skipto = ""):
@@ -157,8 +157,9 @@ def generate_song_inout_data(data_tuple):
           next_bpm_time = bpm_list[bpm_id+1][0]*48
         next_sec += (next_beat-minilast_beat)/(bpm/60*48)
         beat_fract = beat_find(now_beat)
+        assert(next_sec > now_sec)
         mnd_data = [min(now_sec-last_sec,5)/5, min(next_sec-now_sec,5)/5,
-                    min((now_beat-last_beat)/192,1), min((next_beat-now_beat)/192,1),
+                    min((now_beat-last_beat)/384,1), min((next_beat-now_beat)/384,1),
                     beat_fract/48, note/3, start_long/3, end_long/3, bpm/400]
         #array: [Seconds prev to now, Seconds from now to next, beats prev to now, beats now to next,
         #      beat fraction, basic press count, freeze start count, freeze end count, bpm]
@@ -267,7 +268,6 @@ if __name__ == '__main__':
     import tensorflow as tf
     from tensorflow import keras
     from tensorflow.keras.callbacks import LambdaCallback
-    #from tensorflow.keras.models import Sequential
     from tensorflow.keras import layers
     from tensorflow.keras import models
     from tensorflow.keras.layers import *
@@ -293,6 +293,7 @@ if __name__ == '__main__':
     if model_make:
         hist_input = layers.Input(shape=(LSTM_HISTORY_LENGTH,25,),name="hist_input")
         hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_input)
+        hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_input)
         hist_lstma = layers.LSTM(256,return_sequences=True)(hist_lstm)
         hist_lstmb = layers.LSTM(64,return_sequences=True,go_backwards=True)(hist_lstm)
         hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
@@ -303,6 +304,7 @@ if __name__ == '__main__':
         hist_lstm = layers.LSTM(256)(hist_lstm)
         
         mnd_input = layers.Input(shape=(9,),name="mnd_input")
+        x = layers.Dense(32, activation='elu')(mnd_input)
         x = layers.Dense(32, activation='elu')(mnd_input)
         x = layers.concatenate([x,hist_lstm])
         x = layers.Dense(512, activation='elu')(x)
@@ -326,12 +328,14 @@ if __name__ == '__main__':
     huge_gen = huge_full_dataset()
     while True: #huge_full_dataset will keep repeating after going through all songs
         (ins, outs, weights) = next(huge_gen)
-        model.fit(ins,outs,batch_size=512,sample_weight=list([weights,weights,weights,weights]))
+        model.fit(ins,outs,batch_size=512)
         del ins
         del outs
         del weights
         print("Saving model")
-        os.remove("ddr_modelBACKUP.h5")
-        os.rename("ddr_model.h5","ddr_modelBACKUP.h5")
+        if os.path.exists("ddr_modelBACKUP.h5"):
+            os.remove("ddr_modelBACKUP.h5")
+        if os.path.exists("ddr_model.h5"):
+            os.rename("ddr_model.h5","ddr_modelBACKUP.h5")
         model.save("ddr_model.h5")
         print("Save complete")
