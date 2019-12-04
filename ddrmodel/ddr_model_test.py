@@ -8,13 +8,11 @@ from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import LSTM
 from tensorflow.keras.optimizers import RMSprop
 from tensorflow.keras.models import load_model
-import numpy as np
 import random
 import sys
 import io
+from shared_ddr_processing import *
 model = load_model("ddr_model.h5")
-
-LSTM_HISTORY_LENGTH = 48
 
 if len(sys.argv) > 1:
   path = sys.argv[1]
@@ -23,11 +21,6 @@ else:
 
 np.set_printoptions(precision=4,suppress=True)
 
-def beat_find(time_point):
-    for tt in [48, 24, 16, 12, 8, 6, 4, 3, 2, 1]: #time_resolution of individual notes
-        if time_point%tt == 0:
-            return tt
-    raise Exception(f"beat_frac {time_point} not int")
 
 raw_data = []
 with open(path, mode='r', encoding="utf-8") as generic:
@@ -41,7 +34,7 @@ jumps = 0
 lrjumps = 0
 udjumps = 0
 timepoints = []
-history = [np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])]*LSTM_HISTORY_LENGTH
+history = [np.array([0, 0, 0, 0, 0, 0, bpm, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])]*LSTM_HISTORY_LENGTH
 notehistory = []
 last_time = 0
 for i in range(len(raw_data)):
@@ -70,7 +63,8 @@ for i in range(len(raw_data)):
     (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
     #print([L,U,D,R],mnd_in)
     print([L,U,D,R],list(x[0].astype('float') for x in probs))
-    mnd_in.extend([L/3,U/3,D/3,R/3])
+    tmp = list(map(lambda x: np.eye(4)[x],[L,U,D,R]))
+    mnd_in.extend(np.ravel(tmp))
     history.append(mnd_in)
     notehistory.append([L,U,D,R])
     timepoints.append(time_point)
