@@ -1,10 +1,12 @@
 import librosa
 import numpy as np
-np.set_printoptions(precision=4,suppress=True, floatmode="fixed")
+import pickle
+import os
+np.set_printoptions(precision=4,suppress=True, floatmode="fixed", sign=" ")
 SAMPLE_RATE = 22050
 AUDIO_BEFORE_LEN = SAMPLE_RATE//4
 AUDIO_AFTER_LEN = SAMPLE_RATE//16
-NOTE_HISTORY = 32
+NOTE_HISTORY = 2
 PADDING = 5
 def sec_to_id(seconds):
     return round((seconds+PADDING)*SAMPLE_RATE)
@@ -13,6 +15,15 @@ def beat_find(time_point):
         if time_point%tt == 0:
             return tt
     raise Exception(f"beat_frac {time_point} not int")
+
+def load_song_cache(data_file, songfile):
+    cache = os.path.join(os.path.dirname(data_file),"22khz_resample_pad.p")
+    if os.path.exists(cache):
+        return pickle.load(open(cache,"rb"))
+    else:
+        raw_audio = load_song(songfile)
+        pickle.dump(raw_audio, open(cache,"wb"))
+        return raw_audio
 
 def load_song(filename):
     with librosa.warnings.catch_warnings():
