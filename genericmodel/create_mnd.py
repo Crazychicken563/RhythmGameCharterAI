@@ -17,7 +17,7 @@ import io
 import math
 model = load_model("song_model.h5")
 
-time_resolution = 48
+time_resolution = 3
 note_freq = 3
 jump_freq = .08
 long_freq = .02
@@ -36,9 +36,9 @@ with open(path, mode='r', encoding="utf-8") as chart_data:
     (d, offset)     = chart_data.readline().strip().split(":")
     assert (a, b, c, d) == ("CHART", "MUSIC", "BPM", "OFFSET")
 
-raw_audio = load_song_cache(path,music_path)
+raw_audio = onset_strength(path,music_path)
 
-audio_length = (len(raw_audio)/SAMPLE_RATE)-(PADDING*2) #added 2 sec of padding
+audio_length = (len(raw_audio)*SPECT_SKIP/SAMPLE_RATE)-(PADDING*2)
 bpm_list = process_bpm(bpm_data)
 
 
@@ -82,7 +82,7 @@ with open("output.mnd", mode='w', encoding="utf-8") as out:
         start_long = math.floor((random.betavariate(3,3)*.6+.2)+start_long)
         end_long   = math.floor((random.betavariate(3,3)*.6+.2)+end_long)
         out_dat = (note, start_long, end_long)
-        print(out_dat,probs,fake_probs)
+        print(t_res, out_dat,probs,fake_probs,np.sum(raw_audio[id_now-4:id_now+1]))
         hit = False
         for x in out_dat:
             if x > 0:
@@ -93,6 +93,7 @@ with open("output.mnd", mode='w', encoding="utf-8") as out:
             out.write(f"{now_beat} {note} {start_long} {end_long}\n")
             mnd_id += 1
             extended_stats = list(stats)
+            out_dat = tuple(x/3 for x in out_dat)
             extended_stats.extend(out_dat)
             full_hist.append(extended_stats)
             current_holds += out_dat[1] - out_dat[2]

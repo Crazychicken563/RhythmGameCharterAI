@@ -77,9 +77,9 @@ def generate_song_inout_data(data_tuple):
         assert(current_holds == 0)
     mnd_raw.append((0xFFFFFFFF,0,0,0))
     
-    raw_audio = load_song_cache(data_file,song_path)
+    raw_audio = onset_strength(data_file,song_path)
     
-    audio_length = (len(raw_audio)/SAMPLE_RATE)-(PADDING*2) #added 2 sec of padding
+    audio_length = (len(raw_audio)*SPECT_SKIP/SAMPLE_RATE)-(PADDING*2)
     note_freq = any_note_count/audio_length
     jump_freq = jump_count/any_note_count
     long_freq = long_count/any_note_count
@@ -113,7 +113,7 @@ def generate_song_inout_data(data_tuple):
         hit = False
         if mnd_raw[mnd_id][0] == now_beat:
             hit = True
-            out_dat = mnd_raw[mnd_id][1:]
+            out_dat = tuple(x/3 for x in mnd_raw[mnd_id][1:])
             mnd_id += 1
             extended_stats = list(stats)
             extended_stats.extend(out_dat)
@@ -127,7 +127,7 @@ def generate_song_inout_data(data_tuple):
                 print("now:"+str(now_beat)+", goal:"+str(mnd_raw[mnd_id][0])+",bpmnext:"+str(next_bpm_time))
             assert(now_beat < mnd_raw[mnd_id][0])
             out_dat = (0,0,0)
-        if (hit or random.random() > 0.9/time_resolution):
+        if (hit or random.random() < 0.05*time_resolution):
             id_now = sec_to_id(now_sec)
             audio = raw_audio[id_now-AUDIO_BEFORE_LEN:id_now+AUDIO_AFTER_LEN]
             if len(audio) != AUDIO_AFTER_LEN+AUDIO_BEFORE_LEN:
@@ -150,13 +150,13 @@ def generate_song_inout_data(data_tuple):
         now_sec += (now_beat-minilast_beat)/(bpm/60*48)
 
 #Take in a song_data tuple and return a full set of training data
-def map_data_to_training_data(data_file):
-    all_data = generate_song_inout_data(data_file)
+def map_data_to_training_data(data_tuple):
+    all_data = generate_song_inout_data(data_tuple)
     #try:
     zipped_data = zip(*all_data)
     return zipped_data
     #except ValueError:
-        #print("BAD DATA: ",data_file)
+        #print("BAD DATA: ",data_tuple)
         #return ([],[],[],[],[])
 
 
@@ -245,24 +245,19 @@ if __name__ == '__main__':
                 model.compile(loss='categorical_crossentropy', optimizer=optimizer)
             model_make = False
     if model_make:
+        def doublePool(x, pool_size=2):
+            return layers.concatenate([layers.MaxPooling1D(pool_size)(x),layers.AveragePooling1D(pool_size)(x)])
+        
         audio_in = layers.Input(shape=(AUDIO_BEFORE_LEN+AUDIO_AFTER_LEN,1,),name="audio_in")
-        audio = layers.Conv1D(128,8, activation='elu')(audio_in)
-        audio = layers.MaxPooling1D()(audio)
-        audio = layers.Conv1D(128,8, activation='elu')(audio)
-        audio = layers.MaxPooling1D()(audio)
-        audio = layers.Conv1D(128,8, activation='elu')(audio)
-        audio = layers.MaxPooling1D()(audio)
-        audio = layers.Conv1D(128,8, activation='elu')(audio)
-        audio = layers.MaxPooling1D()(audio)
-        audio = layers.Conv1D(128,8, activation='elu')(audio)
-        audio = layers.LSTM(128,return_sequences=True)(audio)
-        audio = layers.Conv1D(128,8, activation='elu')(audio)
-        audio = layers.MaxPooling1D()(audio)
-        audio = layers.Conv1D(128,8, activation='elu')(audio)
-        audio = layers.MaxPooling1D()(audio)
-        audio = layers.Conv1D(128,8, activation='elu')(audio)
-        audio = layers.MaxPooling1D()(audio)
-        audio = layers.LSTM(128)(audio)
+        audio = layers.Conv1D(16,4, activation='elu')(audio_in)
+        audio = doublePool(audio, pool_size=2)
+        audio = layers.Conv1D(32,8, activation='elu')(audio)
+        audio = doublePool(audio, pool_size=4)
+        audio = layers.Conv1D(64,8, activation='elu')(audio)
+        audio = doublePool(audio, pool_size=4)
+        audio = layers.Flatten()(audio)
+        audio = layers.Dense(256, activation='elu')(audio)
+        audio = layers.Dense(256, activation='elu')(audio)
         
         hist_input = layers.Input(shape=(NOTE_HISTORY,12,),name="hist_input")
         hist_lstm = layers.TimeDistributed(layers.Dense(32, activation='elu'))(hist_input)

@@ -13,7 +13,7 @@ excludes = [
 ]
 #ITG and DDR rating scales are close enough to ignore the difference
 #Note that ITG 1/2 are the only official ones. 3, Rebirth, Rebirth+, Rebirth 2 are all fan-made
-#ITG Rebirth+/"True To Form" and "Cry Die" have weird ogg files, manually corrected length via load into VLC -> Save
+#ITG Rebirth+ has a bench of weird ogg files, manually corrected length via load into VLC -> Save
 
 
 danceTypesFound = set()

@@ -81,7 +81,7 @@ for i in range(len(raw_data)):
     hs = len(history)
     hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
     
-    probs = model.predict([np.array(parsed_mnd_in),hist_in])
+    probs = model.predict([parsed_mnd_in,hist_in])
     
     (l,u,d,r) = (x[0].astype('float') for x in probs)
     available = {'l':l,'u':u,'d':d,'r':r}
