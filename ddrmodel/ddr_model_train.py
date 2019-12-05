@@ -180,10 +180,7 @@ def map_data_to_training_data(data_tuple):
     except ValueError:
         print("BAD DATA: ",data_tuple[3])
         return ([],[],[],[],[],[],[])
-    (in_mnd, in_hist) = zip(*ins)
-    (outL, outU, outD, outR) = zip(*outs)
-    #disable data augmentation to get more unique songs in memory
-    return (in_mnd, in_hist, outL, outU, outD, outR, weights)
+    #(in_mnd, in_hist, outL, outU, outD, outR, weights)
 
 
 def generate_dataset():
