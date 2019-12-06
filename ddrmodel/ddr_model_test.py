@@ -1,5 +1,10 @@
 #Needs to output in true .sm format, but otherwise good
 
+from shared_ddr_processing import *
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras.callbacks import LambdaCallback
@@ -11,7 +16,6 @@ from tensorflow.keras.models import load_model
 import random
 import sys
 import io
-from shared_ddr_processing import *
 model = load_model("ddr_model.h5")
 
 if len(sys.argv) > 1:

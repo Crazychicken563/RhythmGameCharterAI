@@ -7,10 +7,9 @@ import multiprocessing
 from multiprocessing import Pool
 #Note: Requires both ddr_finder and ddr_to_generic to be run first
 #will dynamically construct both the MND's data and the output to compare against
-#Current input is the previous arrows' positions/type (basic arrow, freeze start, freeze end, none)x4, MND data for both past arrows and the new step, and a very small amount of audio data around the new step
-#start of song data has a ton of 0 (except for BPM)
+
 source_dir = "../preprocessing/ddr_data"
-songs_per = 48
+songs_per = 256
 
 #Returns a list of charts to be used later (this is cached in ddr_dataset.p)
 def song_data(skipto = ""):
@@ -73,18 +72,19 @@ def generate_song_inout_data(data_tuple):
                 jump_count += 1
             max_simultaneous = max(max_simultaneous,line_data[1]+current_holds)
             current_holds -= line_data[3]
-            mnd_raw.append(line_data)
+            assert(line_data[1]+line_data[2] <= 4)
+            mnd_raw.append((line_data[0],line_data[1] + line_data[2],line_data[2],line_data[3]))
         assert(current_holds == 0)
     mnd_raw.append((0xFFFFFFFF,0,0,0))
     
-    raw_audio = onset_strength(data_file,song_path)
+    raw_audio = onset_strengths(data_file,song_path)
     
     audio_length = (len(raw_audio)*SPECT_SKIP/SAMPLE_RATE)-(PADDING*2)
     note_freq = any_note_count/audio_length
     jump_freq = jump_count/any_note_count
     long_freq = long_count/any_note_count
     bpm_list = process_bpm(bpm_data)
-    print(note_freq,jump_freq,long_freq,data_file)
+    #print(note_freq,jump_freq,long_freq,data_file)
     
     
 
@@ -93,13 +93,14 @@ def generate_song_inout_data(data_tuple):
     next_bpm_time = bpm_list[bpm_id+1][0]*48
     
     now_sec = -offset
-    last_beat = -(192*5)
     now_beat = 0
     mnd_id = 0
-    full_hist = [np.zeros(12)]*NOTE_HISTORY#9 stats data, 3 output
+    full_hist = [[max_simultaneous/4,note_freq/4,jump_freq,long_freq,
+                bpm/400,0,0,0,1,time_resolution/48,
+                0,0,0]]*NOTE_HISTORY#9 stats data, 3 output
   
     current_holds = 0
-    last_found_beat = 0
+    last_found_beat = -192
     last_found_sec = 0
     
     while mnd_id < len(mnd_raw)-1 or now_sec < audio_length:
@@ -107,16 +108,16 @@ def generate_song_inout_data(data_tuple):
         #const stats = (max concurrent, any note frequency, jump freq, long freq)
         #varying stats = (bpm, time apart sec, time apart beats, current holds, fractional beat)
         t_res = beat_find(now_beat)
-        stats = (max_simultaneous/3,note_freq/16,jump_freq,long_freq,
-                bpm/400,now_sec-last_found_sec,min((now_beat-last_found_beat)/192,2),current_holds,t_res)
+        stats = (max_simultaneous/4,note_freq/4,jump_freq,long_freq,
+                bpm/400,now_sec-last_found_sec,min((now_beat-last_found_beat)/384,1),current_holds/4,t_res/48,time_resolution/48)
         history = full_hist[mnd_id:mnd_id+NOTE_HISTORY]
         hit = False
         if mnd_raw[mnd_id][0] == now_beat:
             hit = True
-            out_dat = tuple(x/3 for x in mnd_raw[mnd_id][1:])
+            out_dat = mnd_raw[mnd_id][1:]
             mnd_id += 1
             extended_stats = list(stats)
-            extended_stats.extend(out_dat)
+            extended_stats.extend(tuple(x/3 for x in out_dat))
             full_hist.append(extended_stats)
             current_holds += out_dat[1] - out_dat[2]
             last_found_beat = now_beat
@@ -127,19 +128,20 @@ def generate_song_inout_data(data_tuple):
                 print("now:"+str(now_beat)+", goal:"+str(mnd_raw[mnd_id][0])+",bpmnext:"+str(next_bpm_time))
             assert(now_beat < mnd_raw[mnd_id][0])
             out_dat = (0,0,0)
-        if (hit or random.random() < 0.05*time_resolution):
+        if (hit or random.random() < 0.06*time_resolution):
             id_now = sec_to_id(now_sec)
             audio = raw_audio[id_now-AUDIO_BEFORE_LEN:id_now+AUDIO_AFTER_LEN]
             if len(audio) != AUDIO_AFTER_LEN+AUDIO_BEFORE_LEN:
                 print(data_file)
                 print("audio",now_sec,now_beat,id_now,len(raw_audio))
-            audio = audio.reshape((AUDIO_BEFORE_LEN+AUDIO_AFTER_LEN,1))
-            
-            yield (audio, history,stats,out_dat)
+            #audio = audio.reshape((AUDIO_BEFORE_LEN+AUDIO_AFTER_LEN,1))
+            #if (random.random() < 0.001):
+            #    print (np.sum(raw_audio[id_now-4:id_now+1]), stats,out_dat)
+            (out_note,out_long,out_long_end) = out_dat
+            yield (audio, history,stats,out_note,out_long,out_long_end)
         
-        last_beat = now_beat
+        minilast_beat = now_beat
         now_beat += time_resolution
-        minilast_beat = last_beat
         while now_beat > next_bpm_time:
             assert(minilast_beat <= next_bpm_time)
             now_sec += (next_bpm_time-minilast_beat)/(bpm/60*48)
@@ -195,27 +197,33 @@ def huge_full_dataset():
                 #    print(">>>DATA NOT READY!")
                 #data_superbatch_complete = next_data_superbatch.get()
                 audio_in_set   = []
-                history_set       = []
-                stats_set         = []
-                out_set           = []
+                history_set    = []
+                stats_set      = []
+                out_note_set    = []
+                out_long_set    = []
+                out_long_end_set= []
                 for data in next_data_superbatch:
-                    (audio_in, history, stats, out) = data
+                    (audio_in, history, stats, out_note,out_long,out_long_end) = data
                     audio_in_set.extend(audio_in)
                     history_set.extend(history)
                     stats_set.extend(stats)
-                    out_set.extend(out)
+                    out_note_set.extend(out_note)
+                    out_long_set.extend(out_long)
+                    out_long_end_set.extend(out_long_end)
                     
                 print("Data prepared (",x*songs_per+excess,"/",song_count,")")
                 audio_in_set=np.array(audio_in_set)
                 history_set     =np.array(history_set     )
                 stats_set       =np.array(stats_set       )
-                out_set         =np.array(out_set         )
+                out_note_set    =np.array(out_note_set    )
+                out_long_set    =np.array(out_long_set    )
+                out_long_end_set=np.array(out_long_end_set)
                 print("Data sent")
-                yield ((audio_in_set,history_set,stats_set),
-                    (out_set))
                 if x < max_iters:
                     next_dataSlice = bag[x*songs_per+excess:(x+1)*songs_per+excess]
                     next_data_superbatch = pool.imap_unordered(map_data_to_training_data,next_dataSlice)
+                yield ((audio_in_set,history_set,stats_set),
+                    (out_note_set,out_long_set,out_long_end_set))
 
 
 if __name__ == '__main__':
@@ -242,56 +250,62 @@ if __name__ == '__main__':
                 if sys.argv[2] == "KEEP":
                     optimizer = None
             if optimizer is not None:
-                model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+                model.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
             model_make = False
     if model_make:
-        def doublePool(x, pool_size=2):
-            return layers.concatenate([layers.MaxPooling1D(pool_size)(x),layers.AveragePooling1D(pool_size)(x)])
+        def doublePool(x, pool_size=2,strides=None):
+            return layers.concatenate([layers.MaxPooling1D(pool_size,strides)(x),layers.AveragePooling1D(pool_size,strides)(x)])
         
-        audio_in = layers.Input(shape=(AUDIO_BEFORE_LEN+AUDIO_AFTER_LEN,1,),name="audio_in")
-        audio = layers.Conv1D(16,4, activation='elu')(audio_in)
-        audio = doublePool(audio, pool_size=2)
-        audio = layers.Conv1D(32,8, activation='elu')(audio)
-        audio = doublePool(audio, pool_size=4)
-        audio = layers.Conv1D(64,8, activation='elu')(audio)
-        audio = doublePool(audio, pool_size=4)
+        audio_in = layers.Input(shape=(AUDIO_BEFORE_LEN+AUDIO_AFTER_LEN,4,),name="audio_in")
+        audio = doublePool(audio_in, pool_size=2,strides=1)
+        audio = layers.Conv1D(80,4, activation='elu')(audio)
+        audio = doublePool(audio)
+        audio = layers.Conv1D(72,4, activation='elu')(audio)
+        audio = doublePool(audio)
+        audio = layers.Conv1D(64,4, activation='elu')(audio)
+        audio = doublePool(audio)
+        audio = layers.Conv1D(64,4, activation='elu')(audio)
+        audio = doublePool(audio)
         audio = layers.Flatten()(audio)
-        audio = layers.Dense(256, activation='elu')(audio)
+        audio = layers.Dense(320, activation='elu')(audio)
         audio = layers.Dense(256, activation='elu')(audio)
         
-        hist_input = layers.Input(shape=(NOTE_HISTORY,12,),name="hist_input")
+        hist_input = layers.Input(shape=(NOTE_HISTORY,13,),name="hist_input")
         hist_lstm = layers.TimeDistributed(layers.Dense(32, activation='elu'))(hist_input)
         hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_lstm)
         hist_lstma = layers.LSTM(64,return_sequences=True)(hist_lstm)
         hist_lstmb = layers.LSTM(16,go_backwards=True,return_sequences=True)(hist_lstm)
         hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
         hist_lstm = layers.LSTM(128)(hist_lstm)
+        hist_lstm = layers.Dense(8, activation='elu')(hist_lstm)
         
-        stats_input = layers.Input(shape=(9,),name="stats_input")
+        stats_input = layers.Input(shape=(10,),name="stats_input")
         x = layers.Dense(32, activation='elu')(stats_input)
         x = layers.Dense(64, activation='elu')(x)
-        x = layers.concatenate([x,hist_lstm,audio])
+        x = layers.concatenate([x,audio,hist_lstm])
         x = layers.Dense(768, activation='elu')(x)
         x = layers.Dense(512, activation='elu')(x)
         x = layers.Dense(256, activation='elu')(x)
         x = layers.Dense(256, activation='elu')(x)
         x = layers.Dense(128, activation='elu')(x)
         x = layers.Dense(64, activation='elu')(x)
-        outs = layers.Dense(3, name = "outs")(x) #Basic Notes, Start Long, End long
+        out_basic = layers.Dense(5, activation='softmax', name = "out_basic")(x) #Basic Notes, Start Long, End long
+        out_long = layers.Dense(5, activation='softmax', name = "out_long")(x) #Basic Notes, Start Long, End long
+        out_long_end = layers.Dense(5, activation='softmax', name = "out_long_end")(x) #Basic Notes, Start Long, End long
 
         optimizer = keras.optimizers.Nadam()
-        model = models.Model(inputs=[audio_in,hist_input,stats_input],outputs=[outs])
+        model = models.Model(inputs=[audio_in,hist_input,stats_input],outputs=[out_basic,out_long,out_long_end])
         #audio_before/after = 1/2 and 1/8 sec
         #history = stats+output (+time apart) for previous 64 notes
         #const stats = (max concurrent, any note frequency, jump freq, long freq)
         #varying stats = (bpm, time apart sec, time apart beats, current holds, fractional beat)
 
-        model.compile(loss='mean_absolute_error', optimizer=optimizer)
+        model.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
     model.summary()
     huge_gen = huge_full_dataset()
     while True: #huge_full_dataset will keep repeating after going through all songs
         (ins, outs) = next(huge_gen)
-        model.fit(ins,outs,batch_size=32)
+        model.fit(ins,outs,epochs=1,batch_size=128)
         del ins
         del outs
         print("Saving model")
