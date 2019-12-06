@@ -73,6 +73,7 @@ def generate_song_inout_data(data_tuple):
             max_simultaneous = max(max_simultaneous,line_data[1]+current_holds)
             current_holds -= line_data[3]
             assert(line_data[1]+line_data[2] <= 4)
+            assert(current_holds >= 0)
             mnd_raw.append((line_data[0],line_data[1] + line_data[2],line_data[2],line_data[3]))
         assert(current_holds == 0)
     mnd_raw.append((0xFFFFFFFF,0,0,0))
@@ -109,7 +110,7 @@ def generate_song_inout_data(data_tuple):
         #varying stats = (bpm, time apart sec, time apart beats, current holds, fractional beat)
         t_res = beat_find(now_beat)
         stats = (max_simultaneous/4,note_freq/4,jump_freq,long_freq,
-                bpm/400,now_sec-last_found_sec,min((now_beat-last_found_beat)/384,1),current_holds/4,t_res/48,time_resolution/48)
+                bpm/400,min((now_sec-last_found_sec)/note_freq,1),min((now_beat-last_found_beat)/384,1),current_holds/4,t_res/48,time_resolution/48)
         history = full_hist[mnd_id:mnd_id+NOTE_HISTORY]
         hit = False
         if mnd_raw[mnd_id][0] == now_beat:
@@ -271,18 +272,16 @@ if __name__ == '__main__':
         audio = layers.Dense(256, activation='elu')(audio)
         
         hist_input = layers.Input(shape=(NOTE_HISTORY,13,),name="hist_input")
-        hist_lstm = layers.TimeDistributed(layers.Dense(32, activation='elu'))(hist_input)
-        hist_lstm = layers.TimeDistributed(layers.Dense(64, activation='elu'))(hist_lstm)
-        hist_lstma = layers.LSTM(64,return_sequences=True)(hist_lstm)
-        hist_lstmb = layers.LSTM(16,go_backwards=True,return_sequences=True)(hist_lstm)
-        hist_lstm = layers.concatenate([hist_lstma,hist_lstmb])
-        hist_lstm = layers.LSTM(128)(hist_lstm)
-        hist_lstm = layers.Dense(8, activation='elu')(hist_lstm)
+        hist_data = layers.Flatten()(hist_input)
+        hist_data = layers.Dense(128, activation='elu')(hist_data)
+        hist_data = layers.Dense(256, activation='elu')(hist_data)
+        hist_data = layers.Dense(256, activation='elu')(hist_data)
+        hist_data = layers.Dense(128, activation='elu')(hist_data)
         
         stats_input = layers.Input(shape=(10,),name="stats_input")
         x = layers.Dense(32, activation='elu')(stats_input)
         x = layers.Dense(64, activation='elu')(x)
-        x = layers.concatenate([x,audio,hist_lstm])
+        x = layers.concatenate([x,audio])
         x = layers.Dense(768, activation='elu')(x)
         x = layers.Dense(512, activation='elu')(x)
         x = layers.Dense(256, activation='elu')(x)

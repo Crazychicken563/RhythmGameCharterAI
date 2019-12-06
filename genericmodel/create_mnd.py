@@ -63,7 +63,7 @@ def select_prob(probs):
     best_v = 0
     best_id = 0
     for (i, p) in enumerate(probs):
-        sample_v = p*random.uniform(0.4,1)
+        sample_v = p*random.uniform(0.3,1)
         if sample_v > best_v:
           best_id = i
           best_v = sample_v
@@ -80,7 +80,7 @@ with open("output.mnd", mode='w', encoding="utf-8") as out:
         #varying stats = (bpm, time apart sec, time apart beats, current holds, fractional beat)
         t_res = beat_find(now_beat)
         stats = (max_simultaneous/4,note_freq/4,jump_freq,long_freq,
-                bpm/400,now_sec-last_found_sec,(now_beat-last_found_beat)/384,current_holds/4,t_res/48,time_resolution/48)
+                bpm/400,min(now_sec-last_found_sec,5/note_freq),min((now_beat-last_found_beat)/384,1),current_holds/4,t_res/48,time_resolution/48)
         
         id_now = sec_to_id(now_sec)
         audio = raw_audio[id_now-AUDIO_BEFORE_LEN:id_now+AUDIO_AFTER_LEN]

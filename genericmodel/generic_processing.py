@@ -7,7 +7,7 @@ SAMPLE_RATE = 44100
 SPECT_SKIP = 128
 AUDIO_BEFORE_LEN = SAMPLE_RATE//SPECT_SKIP
 AUDIO_AFTER_LEN = SAMPLE_RATE//SPECT_SKIP//4
-NOTE_HISTORY = 32
+NOTE_HISTORY = 2
 PADDING = 8
 def sec_to_id(seconds):
     return round((seconds+PADDING)*(SAMPLE_RATE/SPECT_SKIP))
@@ -16,46 +16,55 @@ def beat_find(time_point):
         if time_point%tt == 0:
             return tt
     raise Exception(f"beat_frac {time_point} not int")
+    
+def try_pickle(cache_name):
+    if os.path.exists(cache_name):
+        try:
+            return pickle.load(open(cache_name,"rb"))
+        except:
+            print("Corrupted pickle")
+    return None
 
 def load_song(data_file, songfile):
     cache = os.path.join(os.path.dirname(data_file),"44khz_pad.p")
-    if os.path.exists(cache):
-        return pickle.load(open(cache,"rb"))
-    else:
+    song = try_pickle(cache)
+    if song is None:
         with librosa.warnings.catch_warnings():
             librosa.warnings.simplefilter("ignore")
             song, sr = librosa.load(songfile, sr=SAMPLE_RATE, mono=True)
             assert(sr == SAMPLE_RATE)
             song = np.pad(song,SAMPLE_RATE*PADDING)
             pickle.dump(song, open(cache,"wb"))
-            return song
+    return song
 
 def load_spectogram(data_file,songfile):
     cache_spect = os.path.join(os.path.dirname(data_file),"44khz_malspecto_128.p")
-    if os.path.exists(cache_spect):
-        return pickle.load(open(cache_spect,"rb"))
-    else:
+    l_spec = try_pickle(cache_spect)
+    if l_spec is None:
         raw_audio = load_song(data_file, songfile)
-        spectogram = librosa.feature.melspectrogram(raw_audio, sr=SAMPLE_RATE, hop_length=SPECT_SKIP)
-        pickle.dump(spectogram, open(cache_spect,"wb"))
-        return spectogram
+        l_spec = librosa.feature.melspectrogram(raw_audio, sr=SAMPLE_RATE, hop_length=SPECT_SKIP)
+        pickle.dump(l_spec, open(cache_spect,"wb"))
+    return l_spec
 
 def load_constq_spectogram(data_file,songfile):
     cache_spect = os.path.join(os.path.dirname(data_file),"44khz_constqspecto_128.p")
-    if os.path.exists(cache_spect):
-        return pickle.load(open(cache_spect,"rb"))
-    else:
+    l_spec = try_pickle(cache_spect)
+    if l_spec is None:
         raw_audio = load_song(data_file, songfile)
-        spectogram = librosa.core.cqt(raw_audio, sr=SAMPLE_RATE, hop_length=SPECT_SKIP)
-        spectogram = librosa.amplitude_to_db(np.abs(spectogram),ref=np.max)
-        pickle.dump(spectogram, open(cache_spect,"wb"))
-        return spectogram
+        l_spec = librosa.core.cqt(raw_audio, sr=SAMPLE_RATE, hop_length=SPECT_SKIP)
+        l_spec = librosa.amplitude_to_db(np.abs(l_spec),ref=np.max)
+        pickle.dump(l_spec, open(cache_spect,"wb"))
+    return l_spec
 
 def onset_strengths(data_file, songfile):
+    onsets_base = None
+    onsets_cqt = None
+    rms_dat = None
+    zero_rate = None
+    
     cache_onset = os.path.join(os.path.dirname(data_file),"onsets_44khz.p")
-    if os.path.exists(cache_onset):
-        onsets_base = pickle.load(open(cache_onset,"rb"))
-    else:
+    onsets_base = try_pickle(cache_onset)
+    if onsets_base is None:
         spect = load_spectogram(data_file,songfile)
         onsets_base = librosa.onset.onset_strength(S=spect)
         max_n = onsets_base.max()
@@ -64,9 +73,8 @@ def onset_strengths(data_file, songfile):
         pickle.dump(onsets_base, open(cache_onset,"wb"))
 
     cache_onset_cqt = os.path.join(os.path.dirname(data_file),"onsets_cqt_44khz.p")
-    if os.path.exists(cache_onset_cqt):
-        onsets_cqt = pickle.load(open(cache_onset_cqt,"rb"))
-    else:
+    onsets_cqt = try_pickle(cache_onset_cqt)
+    if onsets_cqt is None:
         spect_cqt = load_constq_spectogram(data_file,songfile)
         onsets_cqt = librosa.onset.onset_strength(S=spect_cqt)
         max_n = onsets_cqt.max()
@@ -75,9 +83,8 @@ def onset_strengths(data_file, songfile):
         pickle.dump(onsets_cqt, open(cache_onset_cqt,"wb"))
 
     cache_rms = os.path.join(os.path.dirname(data_file),"rms_44khz.p")
-    if os.path.exists(cache_rms):
-        rms_dat = pickle.load(open(cache_rms,"rb"))
-    else:
+    rms_dat = try_pickle(cache_rms)
+    if rms_dat is None:
         spect = load_constq_spectogram(data_file,songfile)
         rms_dat = librosa.feature.rms(S=spect).flatten()
         max_n = rms_dat.max()
@@ -86,9 +93,8 @@ def onset_strengths(data_file, songfile):
         pickle.dump(rms_dat, open(cache_rms,"wb"))
 
     cache_zero_rate = os.path.join(os.path.dirname(data_file),"zero_rate_44khz.p")
-    if os.path.exists(cache_zero_rate):
-        zero_rate = pickle.load(open(cache_zero_rate,"rb"))
-    else:
+    zero_rate = try_pickle(cache_zero_rate)
+    if zero_rate is None:
         song = load_song(data_file,songfile)
         zero_rate = librosa.feature.zero_crossing_rate(y=song,hop_length=SPECT_SKIP).flatten()
         pickle.dump(zero_rate, open(cache_zero_rate,"wb"))
