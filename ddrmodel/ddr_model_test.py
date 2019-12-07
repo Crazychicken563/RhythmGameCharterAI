@@ -23,13 +23,10 @@ if len(sys.argv) > 1:
 else:
   path = "../preprocessing/ddr_data/In The Groove/Anubis/c8_520.mnd"
 
-np.set_printoptions(precision=4,suppress=True, floatmode="fixed")
-
-
 raw_data = []
 with open(path, mode='r', encoding="utf-8") as generic:
-    songpath = generic.readline()
-    bpm_data = generic.readline()
+    songpath = generic.readline().strip()
+    bpm_data = generic.readline().strip()
     offset = float(generic.readline())
     for line in generic:
         line_data = line.split()
@@ -38,6 +35,9 @@ jumps = 0
 lrjumps = 0
 udjumps = 0
 
+datpath = os.path.join("../preprocessing/ddr_data/",song_relpath(path))
+
+raw_audio = onset_strengths(datpath,songpath)
 bpm_list = process_bpm(bpm_data)
 timepoints = []
 blank_input = np.zeros(25) #9 mnd data, 16 step history
@@ -85,7 +85,11 @@ for i in range(len(raw_data)):
     hs = len(history)
     hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
     
-    probs = model.predict([parsed_mnd_in,hist_in])
+    id_now = sec_to_id(now_sec)
+    audio = raw_audio[id_now-AUDIO_BEFORE_LEN:id_now+AUDIO_AFTER_LEN]
+    audio_in = np.array(audio,dtype="float32",ndmin=3)
+    
+    probs = model.predict([parsed_mnd_in,hist_in, audio_in])
     
     (l,u,d,r) = (x[0].astype('float') for x in probs)
     available = {'l':l,'u':u,'d':d,'r':r}
@@ -116,6 +120,16 @@ for i in range(len(raw_data)):
             lrjumps += 1
 print(jumps,udjumps,lrjumps)
 with open("output.sm", mode='w', encoding="utf-8") as out:
+    out.write("#TITLE: GENERATED SONG;\n")
+    out.write("#MUSIC:"+songpath+";\n")
+    out.write("#OFFSET: "+str(offset)+";\n")
+    out.write("#BPMS:"+bpm_data+";\n")
+    out.write("#NOTES:\n")
+    out.write("     dance-single:\n")
+    out.write("     generator:\n")
+    out.write("     edit:\n")
+    out.write("     1:\n")
+    out.write("     1.000,1.000,1.000,1.000,1.000:\n")
     curr_t = 0
     buf_notes = {}
     buf_res = 48
