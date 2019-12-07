@@ -56,86 +56,71 @@ class network(nn.Module):
         x = x.view(-1, 1, 420)
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        x = torch.relu(self.fc3(x))
+        x = torch.sigmoid(self.fc3(x))
+        x = x.view(-1, 148)
         return x
 
 class audio(Dataset):
     def __init__(self, directory):
         self.items = []
 
-        files = [join(directory, f) for f in listdir(directory) if isfile(join(directory, f))]
-        # TODO remove this, just for prototyping
-        # files=files[:10]
-        for file in files:
-            self.items.append(file)
+        #print("{}".format(listdir(directory)))
+        for f in listdir(directory):
+            #print("{}".format(listdir(join(directory, f))))
+            for file in listdir(join(directory, f)):
+                #if isfile(join(directory, f)):
+                #print("{}".format(join(directory, f, file)))
+                self.items.append(join(directory, f, file))
                             
     def __getitem__(self, index):
         file = self.items[index]
         with open(file, 'rb') as f:
-                sample = pkl.load(f)
-                window = sample['window']
-                label = sample['label']
-                return (torch.tensor(np.expand_dims(window, axis=0)).float(), torch.tensor(np.expand_dims(label, axis=0)).float())
+            sample = pkl.load(f)
+            window = sample['window']
+            label = sample['label']
+            return (torch.tensor(np.expand_dims(window, axis=0)).float(), torch.tensor(label).long())
 
     def __len__(self):
         return len(self.items)
 
-# class audio(Dataset):
-#     def __init__(self, directory):
-#         self.items = []
-
-#         files = [join(directory, f) for f in listdir(directory) if isfile(join(directory, f))]
-#         # TODO remove this, just for prototyping
-#         # files=files[:10]
-#         for file in files:
-#             self.items.append(file)
-                            
-#     def __getitem__(self, index):
-#         file = self.items[index]
-#         with open(file, 'rb') as f:
-#                 sample = pkl.load(f)
-#                 window = sample['window']
-#                 label = sample['label']
-#                 return (torch.tensor(np.expand_dims(np.sum(window, axis=1), axis=0)).float(), torch.tensor(np.expand_dims(label, axis=0)).float())
-
-#     def __len__(self):
-#         return len(self.items)
-
-
-def main(cuda=torch.cuda.is_available(), gpu=1):
+def main(cuda=torch.cuda.is_available(), gpu=0):
     device = torch.device('cuda:' + str(gpu) if cuda else "cpu")
     print(device)
-    data = audio('./samples_window')
+    data = audio("clone_hero_data/output")
     print(len(data))
 
     kwargs = {'num_workers': 8, 'pin_memory': True} if cuda else {}
-    data_loader = torch.utils.data.DataLoader(data,batch_size=256,shuffle=True, **kwargs)
+    data_loader = torch.utils.data.DataLoader(data, batch_size=256, shuffle=True, **kwargs)
 
     model = network().to(device)
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
-    criterion = nn.MSELoss(reduction='sum')
+    criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(11):
+    for epoch in range(20):
         model.train()
+        test_loss = 0
         for batch_idx, (data, target), in enumerate(data_loader):
             data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
             output = model(data)
-            loss = criterion(output, target)
-            print('Epoch', epoch, 'Batch', batch_idx, '/', len(data_loader))
+            loss = criterion(output, torch.max(target, 1)[1])
+            #test_loss += loss
+            print('Epoch', epoch, 'Batch', batch_idx, '/', len(data_loader), 'Loss', loss.cpu().detach().numpy())
             loss.backward()
             optimizer.step()
         
-        test_loss = 0
-        model.eval()
-        for batch_idx, (data, target), in enumerate(data_loader):
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += criterion(output, target)
+        # test_loss = 0
+        # model.eval()
+        # for batch_idx, (data, target), in enumerate(data_loader):
+        #     data, target = data.to(device), target.to(device)
+        #     output = model(data)
+        #     test_loss += criterion(output, target)
 
-        print('Epoch:', epoch, 'Loss:', test_loss)
+        # print('Epoch:', epoch, 'Loss:', test_loss)
 
-    torch.save(model.state_dict(), 'model' + str(gpu) + '.pt')
+        #print('Epoch', epoch, 'Loss', test_loss.cpu().detach().numpy())
+
+        torch.save(model.state_dict(), 'clone_hero_data/models/model' + str(gpu) + '_' + str (epoch) + '.pt')
 
 if __name__ == "__main__":
     main(cuda=True)

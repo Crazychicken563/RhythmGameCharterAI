@@ -56,7 +56,8 @@ class network(nn.Module):
         x = x.view(-1, 1, 420)
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        x = torch.relu(self.fc3(x))
+        x = torch.sigmoid(self.fc3(x))
+        x = x.view(-1, 148)
         return x
 
 class audio(Dataset):
@@ -75,7 +76,7 @@ class audio(Dataset):
                 sample = pkl.load(f)
                 window = sample['window']
                 label = sample['label']
-                return (torch.tensor(np.expand_dims(window, axis=0)).float(), torch.tensor(np.expand_dims(label, axis=0)).float())
+                return (torch.tensor(np.expand_dims(window, axis=0)).float(), torch.tensor(label).long())
 
     def __len__(self):
         return len(self.items)
@@ -102,7 +103,7 @@ class audio(Dataset):
 #         return len(self.items)
 
 
-def main(cuda=torch.cuda.is_available(), gpu=1):
+def main(cuda=torch.cuda.is_available(), gpu=0):
     device = torch.device('cuda:' + str(gpu) if cuda else "cpu")
     print(device)
     data = audio('./samples_window')
@@ -113,29 +114,33 @@ def main(cuda=torch.cuda.is_available(), gpu=1):
 
     model = network().to(device)
     optimizer = optim.Adam(model.parameters(), lr=0.0001)
-    criterion = nn.MSELoss(reduction='sum')
+    criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(11):
+    for epoch in range(20):
         model.train()
+        test_loss = 0
         for batch_idx, (data, target), in enumerate(data_loader):
             data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
             output = model(data)
-            loss = criterion(output, target)
-            print('Epoch', epoch, 'Batch', batch_idx, '/', len(data_loader))
+            loss = criterion(output, torch.max(target, 1)[1])
+            #test_loss += loss
+            print('Epoch', epoch, 'Batch', batch_idx, '/', len(data_loader), 'Loss', loss.cpu().detach().numpy())
             loss.backward()
             optimizer.step()
         
-        test_loss = 0
-        model.eval()
-        for batch_idx, (data, target), in enumerate(data_loader):
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += criterion(output, target)
+        # test_loss = 0
+        # model.eval()
+        # for batch_idx, (data, target), in enumerate(data_loader):
+        #     data, target = data.to(device), target.to(device)
+        #     output = model(data)
+        #     test_loss += criterion(output, target)
 
-        print('Epoch:', epoch, 'Loss:', test_loss)
+        # print('Epoch:', epoch, 'Loss:', test_loss)
 
-    torch.save(model.state_dict(), 'model' + str(gpu) + '.pt')
+        #print('Epoch', epoch, 'Loss', test_loss.cpu().detach().numpy())
+
+        torch.save(model.state_dict(), 'model' + str(gpu) + '_' + str (epoch) + '.pt')
 
 if __name__ == "__main__":
     main(cuda=True)
