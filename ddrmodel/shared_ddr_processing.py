@@ -8,7 +8,6 @@ SAMPLE_RATE = 22050
 SPECT_SKIP = 128
 AUDIO_BEFORE_LEN = SAMPLE_RATE//SPECT_SKIP
 AUDIO_AFTER_LEN = SAMPLE_RATE//SPECT_SKIP//4
-NOTE_HISTORY = 4
 PADDING = 8
 def sec_to_id(seconds):
     return round((seconds+PADDING)*(SAMPLE_RATE/SPECT_SKIP))
@@ -131,7 +130,9 @@ def onset_strengths(data_file, songfile):
     flat_len = sp_flat.shape[0]
     max_len = max([mel_on_len,cqt_on_len,rms_stft_len,band_len,cent_len,flat_len,zcr_len])
     min_len = min([mel_on_len,cqt_on_len,rms_stft_len,band_len,cent_len,flat_len,zcr_len])
-    assert(max_len-min_len <= 1)
+    if max_len-min_len > 1:
+        print("BAD LENGTHS: "+songfile)
+        print([mel_on_len,cqt_on_len,rms_stft_len,band_len,cent_len,flat_len,zcr_len])
     if (max_len > min_len):
         onsets_mel= np.pad(onsets_mel, ((0,max_len-mel_on_len)))
         onsets_cqt = np.pad(onsets_cqt,((0,max_len-cqt_on_len)))

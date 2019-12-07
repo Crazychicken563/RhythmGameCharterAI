@@ -1,5 +1,6 @@
 import librosa
 import numpy as np
+NOTE_HISTORY = 4
 import pickle
 import os
 np.set_printoptions(precision=4,suppress=True, floatmode="fixed", sign=" ")
@@ -7,7 +8,6 @@ SAMPLE_RATE = 22050
 SPECT_SKIP = 128
 AUDIO_BEFORE_LEN = SAMPLE_RATE//SPECT_SKIP
 AUDIO_AFTER_LEN = SAMPLE_RATE//SPECT_SKIP//4
-NOTE_HISTORY = 4
 PADDING = 8
 def sec_to_id(seconds):
     return round((seconds+PADDING)*(SAMPLE_RATE/SPECT_SKIP))

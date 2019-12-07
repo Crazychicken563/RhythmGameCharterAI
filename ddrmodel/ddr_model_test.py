@@ -106,7 +106,7 @@ for i in range(len(raw_data)):
         del available[best_k]
     (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
     #print([L,U,D,R],mnd_in)
-    print([L,U,D,R],list(x[0].astype('float') for x in probs))
+    print([L,U,D,R],list(x[0].astype('float') for x in probs,now_sec)
     tmp = list(map(lambda x: np.eye(4)[x],[L,U,D,R]))
     mnd_in.extend(np.ravel(tmp))
     history.append(mnd_in)

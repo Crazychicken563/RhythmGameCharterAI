@@ -103,7 +103,7 @@ def generate_song_inout_data(data_tuple):
         (mnd_arr, out_arr) = mnd_getdata(chart)
     assert(len(mnd_arr) == len(out_arr))
     assert(len(mnd_arr) > 10)
-    raw_audio = onset_strengths(dirpath,music_path)
+    raw_audio = onset_strengths(os.path.join(dirpath,"fake.dat"),music_path)
     
     weight = 20/math.sqrt(max(len(mnd_arr),100)) #lengths vary from ~100 low, ~300 average, ~1500 max
     inputs = []
@@ -172,7 +172,7 @@ def generate_song_inout_data(data_tuple):
         id_now = sec_to_id(now_sec)
         audio = raw_audio[id_now-AUDIO_BEFORE_LEN:id_now+AUDIO_AFTER_LEN]
         if len(audio) != AUDIO_AFTER_LEN+AUDIO_BEFORE_LEN:
-            print(data_file)
+            print(dirpath)
             print("audio",now_sec,now_beat,id_now,len(raw_audio))
         
         yield (input_mnd_aux, in_arr, audio, out_dat[0],out_dat[1],out_dat[2],out_dat[3],weight)
