@@ -18,7 +18,7 @@ import math
 model = load_model("song_model.h5")
 
 time_resolution = 12
-note_freq = 6
+note_freq = 4.5
 jump_freq = .15
 long_freq = .1
 max_simultaneous = 2
@@ -48,10 +48,7 @@ next_bpm_time = bpm_list[bpm_id+1][0]*48
 
 now_sec = -float(offset)
 now_beat = 0
-mnd_id = 0
-full_hist = [[max_simultaneous,note_freq/5,jump_freq,long_freq,time_resolution/48,
-            bpm/400,0,0,0,1,
-            0,0,0]]*NOTE_HISTORY#9 stats data, 3 output
+mnd_id = 0            
 
 current_holds = 0
 last_found_beat = -192
@@ -63,7 +60,7 @@ def select_prob(probs):
     best_v = 0
     best_id = 0
     for (i, p) in enumerate(probs):
-        sample_v = p*random.uniform(0.8,1)
+        sample_v = p*random.uniform(0.6,1)
         if sample_v > best_v:
           best_id = i
           best_v = sample_v
@@ -75,9 +72,8 @@ with open("output.mnd", mode='w', encoding="utf-8") as out:
     out.write(bpm_data+"\n")
     out.write(offset+"\n")
     while now_sec < audio_length+4:
-        #history = stats+output (+time apart) for previous 64 notes
-        #const stats = (max concurrent, any note frequency, jump freq, long freq)
-        #varying stats = (bpm, time apart sec, time apart beats, current holds, fractional beat)
+        #const stats = (max concurrent, any note frequency, jump freq, long freq, overall time resolution)
+        #varying stats = (bpm, time apart sec (max 2), time apart beats (max 2 measures), current holds, fractional beat)
         t_res = beat_find(now_beat)
         stats = (max_simultaneous,note_freq/5,jump_freq,long_freq,time_resolution/48,
                 bpm/400,min(now_sec-last_found_sec,2)/2,min((now_beat-last_found_beat)/384,1),current_holds/4,t_res/48)
@@ -85,10 +81,8 @@ with open("output.mnd", mode='w', encoding="utf-8") as out:
         id_now = sec_to_id(now_sec)
         audio = raw_audio[id_now-AUDIO_BEFORE_LEN:id_now+AUDIO_AFTER_LEN]
         audio_in = np.array(audio,dtype="float32",ndmin=3)
-        history_in = np.array(full_hist[mnd_id:mnd_id+NOTE_HISTORY],dtype="float32",ndmin=3)
         stats_in = np.array(stats,dtype="float32",ndmin=2)
-        probs = model.predict((audio_in,stats_in, history_in))
-        #fake_probs = model.predict((blank_audio,stats_in, history_in))
+        probs = model.predict((audio_in,stats_in))
         (note_p,start_long_p,end_long_p) = (x[0] for x in probs)
         
         note = select_prob(note_p)
@@ -109,8 +103,6 @@ with open("output.mnd", mode='w', encoding="utf-8") as out:
             mnd_id += 1
             extended_stats = list(stats)
             current_holds += out_dat[1] - out_dat[2]
-            extended_stats.extend(tuple(x/3 for x in out_dat))
-            full_hist.append(extended_stats)
             last_found_beat = now_beat
             last_found_sec = now_sec
             #print(now_sec,now_beat,extended_stats)
