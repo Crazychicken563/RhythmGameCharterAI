@@ -16,6 +16,7 @@ from tensorflow.keras.models import load_model
 import random
 import sys
 import io
+import math
 model = load_model("ddr_model.h5")
 
 if len(sys.argv) > 1:
@@ -34,13 +35,14 @@ with open(path, mode='r', encoding="utf-8") as generic:
 jumps = 0
 lrjumps = 0
 udjumps = 0
+total_step_count = 0
 
 datpath = os.path.join("../preprocessing/ddr_data/",song_relpath(path))
 
 raw_audio = onset_strengths(datpath,songpath)
 bpm_list = process_bpm(bpm_data)
 timepoints = []
-blank_input = np.zeros(25) #9 mnd data, 16 step history
+blank_input = np.zeros(9+7+16) #9 mnd data, 16 step history
 history = [blank_input]*LSTM_HISTORY_LENGTH
 bpm_id = 0
 bpm = bpm_list[bpm_id][1]
@@ -64,6 +66,7 @@ next_sec = (next_beat-minilast_beat)/(bpm/60*48)
 notehistory = []
 for i in range(len(raw_data)):
     (now_beat, note, start_long, end_long) = raw_data[i]
+    total_step_count += note+start_long
     last_beat = now_beat
     minilast_beat = now_beat
     last_sec = now_sec
@@ -81,15 +84,14 @@ for i in range(len(raw_data)):
     mnd_in = [min(now_sec-last_sec,2)/2, min(next_sec-now_sec,2)/2,
                 min((now_beat-last_beat)/384,1), min((next_beat-now_beat)/384,1),
                 beat_fract/48, note/3, start_long/3, end_long/3, min(bpm/400,1)]
+    id_now = sec_to_id(now_sec)
+    audio = (raw_audio[id_now]+raw_audio[id_now-1]+raw_audio[id_now+1])/3
+    mnd_in.extend(audio)
     parsed_mnd_in = np.array(mnd_in,dtype="float32",ndmin=2)
     hs = len(history)
     hist_in = np.array(history[hs-LSTM_HISTORY_LENGTH:hs],dtype="float32",ndmin=3)
     
-    id_now = sec_to_id(now_sec)
-    audio = raw_audio[id_now-AUDIO_BEFORE_LEN:id_now+AUDIO_AFTER_LEN]
-    audio_in = np.array(audio,dtype="float32",ndmin=3)
-    
-    probs = model.predict([parsed_mnd_in,hist_in, audio_in])
+    probs = model.predict([parsed_mnd_in,hist_in])
     
     (l,u,d,r) = (x[0].astype('float') for x in probs)
     available = {'l':l,'u':u,'d':d,'r':r}
@@ -98,7 +100,7 @@ for i in range(len(raw_data)):
       for _ in range(r):
         best_v = 0
         for k, v in available.items():
-          sample_v = v[i]*random.uniform(0.5,1)
+          sample_v = v[i]*random.uniform(0.1,1)
           if sample_v > best_v:
             best_k = k
             best_v = sample_v
@@ -106,7 +108,7 @@ for i in range(len(raw_data)):
         del available[best_k]
     (L,U,D,R) = (out['l'],out['u'],out['d'],out['r'])
     #print([L,U,D,R],mnd_in)
-    print([L,U,D,R],list(x[0].astype('float') for x in probs,now_sec)
+    print([L,U,D,R],list(x[0].astype('float') for x in probs),now_sec)
     tmp = list(map(lambda x: np.eye(4)[x],[L,U,D,R]))
     mnd_in.extend(np.ravel(tmp))
     history.append(mnd_in)
@@ -119,6 +121,12 @@ for i in range(len(raw_data)):
         if (L>0 and R>0):
             lrjumps += 1
 print(jumps,udjumps,lrjumps)
+
+song_length = (len(raw_audio)/SAMPLE_RATE*SPECT_SKIP)-PADDING*2
+difficulty = (total_step_count/song_length)* 1.8
+difficulty_names = ["Beginner", "Easy", "Medium", "Hard", "Challenge"]
+difficulty_name = difficulty_names[max(min(math.floor(difficulty/2.5),4),0)]
+
 with open("output.sm", mode='w', encoding="utf-8") as out:
     out.write("#TITLE: GENERATED SONG;\n")
     out.write("#MUSIC:"+songpath+";\n")
@@ -127,8 +135,8 @@ with open("output.sm", mode='w', encoding="utf-8") as out:
     out.write("#NOTES:\n")
     out.write("     dance-single:\n")
     out.write("     generator:\n")
-    out.write("     edit:\n")
-    out.write("     1:\n")
+    out.write("     "+difficulty_name+":\n")
+    out.write("     "+str(round(difficulty))+":\n")
     out.write("     1.000,1.000,1.000,1.000,1.000:\n")
     curr_t = 0
     buf_notes = {}

@@ -18,7 +18,7 @@ import math
 model = load_model("song_model.h5")
 
 time_resolution = 12
-note_freq = 4.5
+note_freq = 4
 jump_freq = .15
 long_freq = .1
 max_simultaneous = 2
@@ -60,7 +60,7 @@ def select_prob(probs):
     best_v = 0
     best_id = 0
     for (i, p) in enumerate(probs):
-        sample_v = p*random.uniform(0.6,1)
+        sample_v = p*random.uniform(0.9,1)
         if sample_v > best_v:
           best_id = i
           best_v = sample_v
